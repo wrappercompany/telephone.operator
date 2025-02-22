@@ -21,6 +21,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 from appium.webdriver.webdriver import WebDriver
 from appium.options.ios import XCUITestOptions
+import base64
 
 app = Flask(__name__)
 
@@ -161,7 +162,10 @@ class AppiumManager:
     def check_port_in_use(self) -> Optional[int]:
         """Check if Appium port is in use and return the PID if it is."""
         code, out, _ = self.run_command(f'lsof -ti :{self.port}')
-        return int(out) if code == 0 and out else None
+        if code == 0 and out:
+            # Take the first PID if multiple are returned
+            return int(out.split('\n')[0])
+        return None
 
     def kill_existing_process(self, pid: int):
         """Kill an existing process by PID."""
@@ -638,6 +642,146 @@ class AppiumManager:
         except Exception as e:
             raise Exception(f"Failed to uninstall app: {str(e)}")
 
+    def tap(self, x: int, y: int) -> bool:
+        """Tap at specific coordinates."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            actions = self.driver.action()
+            actions.tap_and_hold(x=x, y=y, duration=50).release().perform()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to tap at coordinates: {str(e)}")
+
+    def swipe(self, start_x: int, start_y: int, end_x: int, end_y: int, duration: int = 500) -> bool:
+        """Perform swipe gesture from start point to end point."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            actions = self.driver.action()
+            actions.press(x=start_x, y=start_y).wait(duration).move_to(x=end_x, y=end_y).release().perform()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to perform swipe: {str(e)}")
+
+    def send_keys(self, text: str) -> bool:
+        """Send keystrokes to the device."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            actions = self.driver.action()
+            actions.send_keys(text).perform()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to send keys: {str(e)}")
+
+    def set_location(self, latitude: float, longitude: float, altitude: float = 0) -> bool:
+        """Set the device's simulated location."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.set_location(latitude, longitude, altitude)
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to set location: {str(e)}")
+
+    def get_location(self) -> dict:
+        """Get the device's current location."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            location = self.driver.location
+            return {
+                'latitude': location['latitude'],
+                'longitude': location['longitude'],
+                'altitude': location.get('altitude', 0)
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get location: {str(e)}")
+
+    def shake_device(self) -> bool:
+        """Simulate shaking the device."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.shake()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to shake device: {str(e)}")
+
+    def get_page_source(self) -> str:
+        """Get the current page source (XML representation of UI)."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            return self.driver.page_source
+        except Exception as e:
+            raise Exception(f"Failed to get page source: {str(e)}")
+
+    def find_element(self, locator_type: str, locator_value: str) -> dict:
+        """Find an element on the screen using various locator strategies."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            element = self.driver.find_element(locator_type, locator_value)
+            return {
+                'id': element.id,
+                'text': element.text,
+                'location': element.location,
+                'size': element.size,
+                'enabled': element.is_enabled(),
+                'displayed': element.is_displayed()
+            }
+        except Exception as e:
+            raise Exception(f"Failed to find element: {str(e)}")
+
+    def get_device_logs(self, log_type: str = 'syslog') -> List[str]:
+        """Get device logs of specified type."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            return self.driver.get_log(log_type)
+        except Exception as e:
+            raise Exception(f"Failed to get device logs: {str(e)}")
+
+    def start_recording_screen(self) -> bool:
+        """Start screen recording."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.start_recording_screen()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to start screen recording: {str(e)}")
+
+    def stop_recording_screen(self) -> str:
+        """Stop screen recording and return the video file path."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"screen_recording_{timestamp}.mp4"
+            filepath = os.path.join(self.screenshot_dir, filename)
+            
+            video_data = self.driver.stop_recording_screen()
+            with open(filepath, "wb") as f:
+                f.write(base64.b64decode(video_data))
+            
+            return filepath
+        except Exception as e:
+            raise Exception(f"Failed to stop screen recording: {str(e)}")
+
 # Flask routes
 @app.route('/devices', methods=['GET'])
 def get_devices():
@@ -792,6 +936,129 @@ def uninstall_app():
     try:
         success = manager.uninstall_app(data['bundle_id'])
         return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/tap', methods=['POST'])
+def tap():
+    """Tap at specific coordinates."""
+    data = request.get_json()
+    if not data or 'x' not in data or 'y' not in data:
+        return jsonify({'error': 'x and y coordinates are required'}), 400
+        
+    try:
+        success = manager.tap(data['x'], data['y'])
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/swipe', methods=['POST'])
+def swipe():
+    """Perform swipe gesture."""
+    data = request.get_json()
+    required = ['start_x', 'start_y', 'end_x', 'end_y']
+    if not data or not all(k in data for k in required):
+        return jsonify({'error': 'start_x, start_y, end_x, and end_y coordinates are required'}), 400
+        
+    try:
+        duration = data.get('duration', 500)
+        success = manager.swipe(data['start_x'], data['start_y'], data['end_x'], data['end_y'], duration)
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/keys', methods=['POST'])
+def send_keys():
+    """Send keystrokes to the device."""
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'error': 'text is required'}), 400
+        
+    try:
+        success = manager.send_keys(data['text'])
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/location', methods=['GET', 'POST'])
+def location():
+    """Get or set device location."""
+    try:
+        if request.method == 'POST':
+            data = request.get_json()
+            required = ['latitude', 'longitude']
+            if not data or not all(k in data for k in required):
+                return jsonify({'error': 'latitude and longitude are required'}), 400
+                
+            altitude = data.get('altitude', 0)
+            success = manager.set_location(data['latitude'], data['longitude'], altitude)
+            return jsonify({'success': success})
+        else:
+            location = manager.get_location()
+            return jsonify(location)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/shake', methods=['POST'])
+def shake_device():
+    """Simulate shaking the device."""
+    try:
+        success = manager.shake_device()
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/page_source', methods=['GET'])
+def get_page_source():
+    """Get the current page source."""
+    try:
+        source = manager.get_page_source()
+        return jsonify({'source': source})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/find_element', methods=['POST'])
+def find_element():
+    """Find an element on the screen."""
+    data = request.get_json()
+    if not data or 'locator_type' not in data or 'locator_value' not in data:
+        return jsonify({'error': 'locator_type and locator_value are required'}), 400
+        
+    try:
+        element = manager.find_element(data['locator_type'], data['locator_value'])
+        return jsonify(element)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/logs', methods=['GET'])
+def get_device_logs():
+    """Get device logs."""
+    try:
+        log_type = request.args.get('type', 'syslog')
+        logs = manager.get_device_logs(log_type)
+        return jsonify({'logs': logs})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/recording/start', methods=['POST'])
+def start_recording():
+    """Start screen recording."""
+    try:
+        success = manager.start_recording_screen()
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/recording/stop', methods=['POST'])
+def stop_recording():
+    """Stop screen recording."""
+    try:
+        filepath = manager.stop_recording_screen()
+        return jsonify({
+            'success': True,
+            'filepath': filepath,
+            'filename': os.path.basename(filepath)
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
