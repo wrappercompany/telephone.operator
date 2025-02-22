@@ -39,6 +39,8 @@ class AppiumManager:
         self.selected_device = None
         self.appium_process = None
         self.driver = None
+        self.screenshot_dir = os.path.join(os.getcwd(), 'screenshots')
+        os.makedirs(self.screenshot_dir, exist_ok=True)
 
     def run_command(self, command: str, shell: bool = False) -> tuple[int, str, str]:
         """Run a command and return returncode, stdout, stderr."""
@@ -81,19 +83,39 @@ class AppiumManager:
     def install_appium(self):
         """Install Appium and its dependencies."""
         print("Installing Appium and dependencies...")
+        
+        # First check if npm is available
+        if not self.check_command_exists('npm'):
+            print("npm not found. Installing Node.js first...")
+            self.install_node()
+            
+        # Install or update Appium
+        print("\nInstalling/Updating Appium...")
         commands = [
-            'npm install -g appium',
+            'npm install -g appium@latest',
             'npm install -g appium-doctor',
-            'appium driver install xcuitest',  # for iOS only
         ]
 
         for cmd in commands:
-            print(f"Running: {cmd}")
+            print(f"\nRunning: {cmd}")
             code, out, err = self.run_command(cmd)
             if code != 0:
                 print(f"Error running {cmd}:")
                 print(err)
                 return False
+                
+        # Install XCUITest driver
+        print("\nInstalling XCUITest driver...")
+        code, out, err = self.run_command('appium driver install xcuitest')
+        if code != 0:
+            print("Error installing XCUITest driver:")
+            print(err)
+            return False
+            
+        # Run appium-doctor to check setup
+        print("\nChecking Appium setup with appium-doctor...")
+        self.run_command('appium-doctor --ios')
+        
         return True
 
     def check_ios_dependencies(self) -> bool:
@@ -154,19 +176,28 @@ class AppiumManager:
 
     def setup(self):
         """Perform initial setup if needed."""
-        self.install_node()
+        print("Setting up Appium environment...")
         
-        if not self.check_command_exists('appium'):
+        # Install Node.js if needed
+        if not self.check_command_exists('node'):
+            self.install_node()
+        
+        # Install/Update Appium and drivers
+        if not self.check_command_exists('appium') or not self.check_command_exists('appium-doctor'):
             if not self.install_appium():
                 print("Failed to install Appium. Please check the errors above.")
                 sys.exit(1)
         
+        # Check iOS dependencies
         if not self.check_ios_dependencies():
             print("\nPlease install the missing dependencies and try again.")
             sys.exit(1)
         
-        # Create Appium home and log directories if they don't exist
+        # Create Appium home and log directories
         os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.screenshot_dir, exist_ok=True)
+        
+        print("\nSetup completed successfully!")
 
     def detect_ios_devices(self) -> List[Dict[str, str]]:
         """Detect connected iOS devices using multiple methods."""
@@ -362,11 +393,29 @@ class AppiumManager:
         """Select a device by UDID and create an Appium session."""
         device = next((d for d in self.connected_devices if d['udid'] == udid), None)
         if not device:
+            print(f"Device with UDID {udid} not found")
             return False
 
         if self.driver:
-            self.driver.quit()
+            try:
+                self.driver.quit()
+            except Exception as e:
+                print(f"Warning: Error quitting previous driver: {e}")
             self.driver = None
+
+        print(f"\nSetting up Appium session for device: {device['name']} ({device['udid']})")
+        
+        # Verify Appium installation
+        _, appium_version, _ = self.run_command('appium --version')
+        print(f"Appium version: {appium_version}")
+        
+        # Check XCUITest driver
+        _, drivers, _ = self.run_command('appium driver list --installed')
+        print(f"Installed drivers: {drivers}")
+        
+        if 'xcuitest' not in drivers.lower():
+            print("Installing XCUITest driver...")
+            self.run_command('appium driver install xcuitest')
 
         options = XCUITestOptions()
         options.platformName = 'iOS'
@@ -375,16 +424,40 @@ class AppiumManager:
         options.deviceName = device['name']
         options.xcodeOrgId = os.getenv('TEAM_ID', '')
         options.xcodeSigningId = 'iPhone Developer'
+        
+        # Additional capabilities for better session creation
+        if device['is_simulator']:
+            options.platformVersion = device['version']
+        else:
+            options.platformVersion = device.get('version', '')
+            options.usePrebuiltWda = True
+            options.useXctestrunFile = False
+            options.skipLogCapture = True
+            options.wdaLaunchTimeout = 120000
+            options.wdaConnectionTimeout = 120000
+            options.webDriverAgentUrl = None
+
+        print("\nAppium capabilities:")
+        print(json.dumps(options.capabilities, indent=2))
 
         try:
+            print("\nCreating Appium session...")
             self.driver = WebDriver(
                 command_executor=f'http://localhost:{self.port}',
                 options=options
             )
+            print("Session created successfully")
             self.selected_device = device
             return True
         except Exception as e:
-            print(f"Error creating Appium session: {e}")
+            print(f"\nError creating Appium session:")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
+            print("\nPlease check:")
+            print("1. WebDriverAgent is properly set up")
+            print("2. Device is unlocked and trusted")
+            print("3. Xcode and iOS development certificates are properly configured")
+            print("4. TEAM_ID environment variable is set correctly")
             return False
 
     def stop_server(self):
@@ -403,6 +476,167 @@ class AppiumManager:
             except subprocess.TimeoutExpired:
                 self.appium_process.kill()
             print("Appium server stopped")
+
+    def check_session(self) -> bool:
+        """Check if there's an active Appium session and device selected."""
+        if not self.driver or not self.selected_device:
+            return False
+        try:
+            # Try to get device time to verify session is active
+            self.driver.get_device_time()
+            return True
+        except:
+            return False
+
+    def get_device_info(self) -> Dict:
+        """Get detailed information about the currently selected device."""
+        if not self.check_session():
+            raise Exception("No active device session")
+
+        try:
+            info = {
+                'device': self.selected_device,
+                'battery': self.driver.get_battery_info(),
+                'time': self.driver.get_device_time(),
+                'orientation': self.driver.orientation,
+            }
+            
+            # Get additional device info using ideviceinfo if available
+            if not self.selected_device['is_simulator'] and self.check_command_exists('ideviceinfo'):
+                udid = self.selected_device['udid']
+                properties = [
+                    'ProductType', 'ProductVersion', 'BuildVersion',
+                    'DeviceName', 'DeviceClass', 'CPUArchitecture'
+                ]
+                for prop in properties:
+                    _, value, _ = self.run_command(f'ideviceinfo -u {udid} -k {prop}')
+                    if value:
+                        info[prop.lower()] = value.strip()
+                        
+            return info
+        except Exception as e:
+            raise Exception(f"Failed to get device info: {str(e)}")
+
+    def take_screenshot(self) -> str:
+        """Take a screenshot of the device and return the file path."""
+        if not self.check_session():
+            raise Exception("No active device session")
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"screenshot_{timestamp}.png"
+            filepath = os.path.join(self.screenshot_dir, filename)
+            
+            self.driver.get_screenshot_as_file(filepath)
+            return filepath
+        except Exception as e:
+            raise Exception(f"Failed to take screenshot: {str(e)}")
+
+    def set_orientation(self, orientation: str) -> str:
+        """Set the device orientation (PORTRAIT or LANDSCAPE)."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        orientation = orientation.upper()
+        if orientation not in ['PORTRAIT', 'LANDSCAPE']:
+            raise ValueError("Orientation must be either 'PORTRAIT' or 'LANDSCAPE'")
+            
+        try:
+            self.driver.orientation = orientation
+            return self.driver.orientation
+        except Exception as e:
+            raise Exception(f"Failed to set orientation: {str(e)}")
+
+    def lock_device(self) -> bool:
+        """Lock the device screen."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.lock()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to lock device: {str(e)}")
+
+    def unlock_device(self) -> bool:
+        """Unlock the device screen."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.unlock()
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to unlock device: {str(e)}")
+
+    def press_home(self) -> bool:
+        """Press the home button."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            # Using mobile: pressButton command for iOS
+            self.driver.execute_script('mobile: pressButton', {'name': 'home'})
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to press home button: {str(e)}")
+
+    def launch_app(self, bundle_id: str) -> bool:
+        """Launch an application by bundle ID."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.activate_app(bundle_id)
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to launch app: {str(e)}")
+
+    def close_app(self, bundle_id: str) -> bool:
+        """Close an application by bundle ID."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.terminate_app(bundle_id)
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to close app: {str(e)}")
+
+    def is_app_installed(self, bundle_id: str) -> bool:
+        """Check if an application is installed."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            return self.driver.is_app_installed(bundle_id)
+        except Exception as e:
+            raise Exception(f"Failed to check app installation: {str(e)}")
+
+    def install_app(self, app_path: str) -> bool:
+        """Install an application from .ipa file."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        if not os.path.exists(app_path):
+            raise FileNotFoundError(f"App file not found: {app_path}")
+            
+        try:
+            self.driver.install_app(app_path)
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to install app: {str(e)}")
+
+    def uninstall_app(self, bundle_id: str) -> bool:
+        """Uninstall an application by bundle ID."""
+        if not self.check_session():
+            raise Exception("No active device session")
+            
+        try:
+            self.driver.remove_app(bundle_id)
+            return True
+        except Exception as e:
+            raise Exception(f"Failed to uninstall app: {str(e)}")
 
 # Flask routes
 @app.route('/devices', methods=['GET'])
@@ -430,6 +664,136 @@ def get_current_device():
         return jsonify(manager.selected_device)
     else:
         return jsonify({'error': 'No device selected'}), 404
+
+@app.route('/device/info', methods=['GET'])
+def get_device_info():
+    """Get detailed information about the current device."""
+    try:
+        info = manager.get_device_info()
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/screenshot', methods=['GET'])
+def take_screenshot():
+    """Take a screenshot of the current device."""
+    try:
+        filepath = manager.take_screenshot()
+        return jsonify({
+            'success': True,
+            'filepath': filepath,
+            'filename': os.path.basename(filepath)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/orientation', methods=['GET', 'POST'])
+def device_orientation():
+    """Get or set device orientation."""
+    try:
+        if request.method == 'POST':
+            data = request.get_json()
+            if not data or 'orientation' not in data:
+                return jsonify({'error': 'Orientation is required'}), 400
+            orientation = manager.set_orientation(data['orientation'])
+            return jsonify({'success': True, 'orientation': orientation})
+        else:
+            info = manager.get_device_info()
+            return jsonify({'orientation': info['orientation']})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/lock', methods=['POST'])
+def lock_device():
+    """Lock the device screen."""
+    try:
+        success = manager.lock_device()
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/unlock', methods=['POST'])
+def unlock_device():
+    """Unlock the device screen."""
+    try:
+        success = manager.unlock_device()
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/device/home', methods=['POST'])
+def press_home():
+    """Press the home button."""
+    try:
+        success = manager.press_home()
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/app/launch', methods=['POST'])
+def launch_app():
+    """Launch an application by bundle ID."""
+    data = request.get_json()
+    if not data or 'bundle_id' not in data:
+        return jsonify({'error': 'Bundle ID is required'}), 400
+        
+    try:
+        success = manager.launch_app(data['bundle_id'])
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/app/close', methods=['POST'])
+def close_app():
+    """Close an application by bundle ID."""
+    data = request.get_json()
+    if not data or 'bundle_id' not in data:
+        return jsonify({'error': 'Bundle ID is required'}), 400
+        
+    try:
+        success = manager.close_app(data['bundle_id'])
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/app/installed', methods=['GET'])
+def is_app_installed():
+    """Check if an application is installed."""
+    bundle_id = request.args.get('bundle_id')
+    if not bundle_id:
+        return jsonify({'error': 'Bundle ID is required'}), 400
+        
+    try:
+        is_installed = manager.is_app_installed(bundle_id)
+        return jsonify({'installed': is_installed})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/app/install', methods=['POST'])
+def install_app():
+    """Install an application from .ipa file."""
+    data = request.get_json()
+    if not data or 'app_path' not in data:
+        return jsonify({'error': 'App path is required'}), 400
+        
+    try:
+        success = manager.install_app(data['app_path'])
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/app/uninstall', methods=['POST'])
+def uninstall_app():
+    """Uninstall an application by bundle ID."""
+    data = request.get_json()
+    if not data or 'bundle_id' not in data:
+        return jsonify({'error': 'Bundle ID is required'}), 400
+        
+    try:
+        success = manager.uninstall_app(data['bundle_id'])
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 def main():
     global manager
