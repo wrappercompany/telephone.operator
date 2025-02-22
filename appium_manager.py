@@ -7,6 +7,7 @@ import time
 import signal
 import platform
 from typing import Optional
+from datetime import datetime
 
 class AppiumManager:
     def __init__(self):
@@ -14,6 +15,8 @@ class AppiumManager:
         self.is_mac = platform.system() == 'Darwin'
         self.node_min_version = '12.0.0'
         self.appium_home = os.path.expanduser('~/.appium')
+        self.log_dir = os.path.join(self.appium_home, 'logs')
+        self.log_file = os.path.join(self.log_dir, f'appium_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 
     def run_command(self, command: str, shell: bool = False) -> tuple[int, str, str]:
         """Run a command and return returncode, stdout, stderr."""
@@ -99,8 +102,8 @@ class AppiumManager:
                 print("Failed to install Appium. Please check the errors above.")
                 sys.exit(1)
         
-        # Create Appium home directory if it doesn't exist
-        os.makedirs(self.appium_home, exist_ok=True)
+        # Create Appium home and log directories if they don't exist
+        os.makedirs(self.log_dir, exist_ok=True)
 
     def start_server(self):
         """Start the Appium server."""
@@ -111,7 +114,8 @@ class AppiumManager:
             self.kill_existing_process(pid)
 
         print(f"\nStarting Appium server on port {self.port}...")
-        print("Logs will appear below. Press Ctrl+C to stop the server.")
+        print(f"Logs will be written to: {self.log_file}")
+        print("Only errors will be displayed here. Press Ctrl+C to stop the server.")
         print("-" * 40)
 
         # Prepare Appium command
@@ -122,13 +126,27 @@ class AppiumManager:
             '--relaxed-security',
             '--log-timestamp',
             '--local-timezone',
-            '--no-perms-check'
+            '--no-perms-check',
+            '--log-level', 'debug',  # Log everything to file
+            '--log', self.log_file,  # Write logs to file
+            '--debug-log-spacing',   # Better log formatting
         ]
 
         # Start Appium server
         try:
-            process = subprocess.Popen(cmd)
-            process.wait()
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Only monitor for errors in the console
+            while process.poll() is None:
+                stderr_line = process.stderr.readline()
+                if stderr_line:
+                    print(stderr_line.strip())
+                        
         except KeyboardInterrupt:
             print("\nStopping Appium server...")
             process.terminate()
