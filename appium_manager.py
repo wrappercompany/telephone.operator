@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "flask==3.0.2",
+#   "appium-python-client==3.1.1",
+#   "requests==2.31.0"
+# ]
+# ///
+
 import os
 import sys
 import subprocess
@@ -9,6 +18,11 @@ import platform
 import json
 from typing import Optional, List, Dict
 from datetime import datetime
+from flask import Flask, jsonify, request
+from appium.webdriver.webdriver import WebDriver
+from appium.options.ios import XCUITestOptions
+
+app = Flask(__name__)
 
 class AppiumManager:
     def __init__(self):
@@ -17,10 +31,14 @@ class AppiumManager:
             sys.exit(1)
             
         self.port = 4723
+        self.web_port = 8080  # Changed from 5000 to 8080
         self.appium_home = os.path.expanduser('~/.appium')
         self.log_dir = os.path.join(self.appium_home, 'logs')
         self.log_file = os.path.join(self.log_dir, f'appium_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
         self.connected_devices = []
+        self.selected_device = None
+        self.appium_process = None
+        self.driver = None
 
     def run_command(self, command: str, shell: bool = False) -> tuple[int, str, str]:
         """Run a command and return returncode, stdout, stderr."""
@@ -309,7 +327,7 @@ class AppiumManager:
 
         print(f"\nStarting Appium server on port {self.port}...")
         print(f"Logs will be written to: {self.log_file}")
-        print("Only errors will be displayed here. Press Ctrl+C to stop the server.")
+        print("Only errors will be displayed here.")
         print("-" * 40)
 
         # Prepare Appium command
@@ -326,55 +344,108 @@ class AppiumManager:
             '--debug-log-spacing',   # Better log formatting
         ]
 
-        # Add device-specific capabilities if an iOS device is connected
-        if self.connected_devices:
-            default_device = self.connected_devices[0]
-            cmd.extend([
-                '--default-capabilities',
-                json.dumps({
-                    'platformName': 'iOS',
-                    'automationName': 'XCUITest',
-                    'udid': default_device['udid'],
-                    'deviceName': default_device['name'],
-                    'xcodeOrgId': os.getenv('TEAM_ID', ''),  # From environment variable
-                    'xcodeSigningId': 'iPhone Developer'
-                })
-            ])
-
         # Start Appium server
         try:
-            process = subprocess.Popen(
+            self.appium_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True
             )
+            time.sleep(2)  # Wait for server to start
             
-            # Only monitor for errors in the console
-            while process.poll() is None:
-                stderr_line = process.stderr.readline()
-                if stderr_line:
-                    print(stderr_line.strip())
-                        
-        except KeyboardInterrupt:
-            print("\nStopping Appium server...")
-            process.terminate()
+        except Exception as e:
+            print(f"\nError starting Appium server: {e}")
+            sys.exit(1)
+
+    def select_device(self, udid: str) -> bool:
+        """Select a device by UDID and create an Appium session."""
+        device = next((d for d in self.connected_devices if d['udid'] == udid), None)
+        if not device:
+            return False
+
+        if self.driver:
+            self.driver.quit()
+            self.driver = None
+
+        options = XCUITestOptions()
+        options.platformName = 'iOS'
+        options.automationName = 'XCUITest'
+        options.udid = device['udid']
+        options.deviceName = device['name']
+        options.xcodeOrgId = os.getenv('TEAM_ID', '')
+        options.xcodeSigningId = 'iPhone Developer'
+
+        try:
+            self.driver = WebDriver(
+                command_executor=f'http://localhost:{self.port}',
+                options=options
+            )
+            self.selected_device = device
+            return True
+        except Exception as e:
+            print(f"Error creating Appium session: {e}")
+            return False
+
+    def stop_server(self):
+        """Stop the Appium server and cleanup."""
+        if self.driver:
             try:
-                process.wait(timeout=5)
+                self.driver.quit()
+            except:
+                pass
+            self.driver = None
+            
+        if self.appium_process:
+            self.appium_process.terminate()
+            try:
+                self.appium_process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                process.kill()
+                self.appium_process.kill()
             print("Appium server stopped")
 
+# Flask routes
+@app.route('/devices', methods=['GET'])
+def get_devices():
+    """Get list of connected devices."""
+    manager.detect_connected_devices()
+    return jsonify(manager.connected_devices)
+
+@app.route('/device/select', methods=['POST'])
+def select_device():
+    """Select a device by UDID."""
+    data = request.get_json()
+    if not data or 'udid' not in data:
+        return jsonify({'error': 'UDID is required'}), 400
+        
+    if manager.select_device(data['udid']):
+        return jsonify({'success': True, 'device': manager.selected_device})
+    else:
+        return jsonify({'error': 'Failed to select device'}), 400
+
+@app.route('/device/current', methods=['GET'])
+def get_current_device():
+    """Get currently selected device."""
+    if manager.selected_device:
+        return jsonify(manager.selected_device)
+    else:
+        return jsonify({'error': 'No device selected'}), 404
+
 def main():
+    global manager
     manager = AppiumManager()
     try:
         manager.setup()
         manager.start_server()
+        # Start Flask server
+        app.run(host='0.0.0.0', port=manager.web_port)
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
+        manager.stop_server()
         sys.exit(0)
     except Exception as e:
         print(f"An error occurred: {e}")
+        manager.stop_server()
         sys.exit(1)
 
 if __name__ == '__main__':
