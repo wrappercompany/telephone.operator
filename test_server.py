@@ -8,6 +8,7 @@
 #   "fastmcp>=0.1.0",
 #   "urllib3<2.0.0",
 #   "pydantic>=2.0.0",
+#   "@modelcontextprotocol/inspector",
 # ]
 # ///
 
@@ -15,6 +16,7 @@ import pytest
 import pytest_asyncio
 import asyncio
 import logging
+import subprocess
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
@@ -199,14 +201,37 @@ async def test_launch_app():
 
 if __name__ == "__main__":
     import sys
+    import argparse
+    
+    # Create argument parser
+    parser = argparse.ArgumentParser(description='Run iOS automation tests')
+    parser.add_argument('--lf', action='store_true', help='Run only failed tests')
+    parser.add_argument('--failed-first', action='store_true', help='Run failed tests first')
+    parser.add_argument('--inspector', action='store_true', help='Launch MCP Inspector before running tests')
+    
+    args = parser.parse_args()
     
     # Default pytest arguments
     pytest_args = ["-v", "--asyncio-mode=strict"]
     
-    # Add --lf flag if specified to run only failed tests
-    if len(sys.argv) > 1 and sys.argv[1] == "--lf":
+    # Launch inspector if flag is set
+    if args.inspector:
+        try:
+            subprocess.run([
+                "npx",
+                "@modelcontextprotocol/inspector",
+                "uv",
+                "--directory", ".",
+                "run"
+            ], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to launch inspector: {e}")
+            sys.exit(1)
+    
+    # Add appropriate flags
+    if args.lf:
         pytest_args.extend(["--lf"])
-    elif len(sys.argv) > 1 and sys.argv[1] == "--failed-first":
+    elif args.failed_first:
         pytest_args.extend(["--failed-first"])
     
     pytest_args.append(__file__)
