@@ -13,6 +13,7 @@ An MCP server that provides iOS device automation capabilities through Appium, p
 
 ## Prerequisites
 
+- macOS (required for Xcode and iOS development)
 - Xcode with iOS 18.2 simulator
 - Node.js and npm (for Appium)
 - Appium Server
@@ -22,11 +23,7 @@ An MCP server that provides iOS device automation capabilities through Appium, p
 
 1. Install UV if you haven't already:
 ```bash
-# On MacOS/Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# On Windows
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 2. Install Appium and required drivers:
@@ -43,10 +40,7 @@ cd telephone-operator
 uv venv
 
 # Activate virtual environment
-# On MacOS/Linux:
 source .venv/bin/activate
-# On Windows:
-.venv\Scripts\activate
 ```
 
 ## Running the Server
@@ -108,23 +102,6 @@ Add the following to your Claude for Desktop configuration:
             "args": [
                 "--directory",
                 "/ABSOLUTE/PATH/TO/PARENT/FOLDER",
-                "run",
-                "server.py"
-            ]
-        }
-    }
-}
-```
-
-For Windows users, use Windows-style paths:
-```json
-{
-    "mcpServers": {
-        "telephone-operator": {
-            "command": "uv",
-            "args": [
-                "--directory",
-                "C:\\ABSOLUTE\\PATH\\TO\\PARENT\\FOLDER",
                 "run",
                 "server.py"
             ]
