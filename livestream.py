@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class PageSourceMonitor:
-    def __init__(self, interval: float = 1.0, output_dir: Optional[Path] = None, max_depth: int = 5):
+    def __init__(self, interval: float = 0.25, output_dir: Optional[Path] = None, max_depth: int = 5, strings_only: bool = False, enable_logging: bool = False):
         self.interval: float = interval
         self.output_dir: Path = output_dir or Path("page_source_logs")
         self.console: Console = Console()
@@ -50,14 +50,17 @@ class PageSourceMonitor:
         self.changes_count: int = 0
         self.max_depth: int = max_depth
         self.last_error: Optional[str] = None
+        self.strings_only: bool = strings_only
+        self.enable_logging: bool = enable_logging
         
         # Initialize tokenizer for GPT-4o (latest model)
         self.tokenizers: Dict[str, Optional[Any]] = {
             'gpt-4o': None  # Will be initialized on first use with correct encoding
         }
         
-        # Create output directory if it doesn't exist
-        self.output_dir.mkdir(exist_ok=True)
+        # Create output directory only if logging is enabled
+        if self.enable_logging:
+            self.output_dir.mkdir(exist_ok=True)
     
     def _setup_layout(self) -> None:
         """Setup the rich layout for display."""
@@ -115,6 +118,21 @@ class PageSourceMonitor:
         """Determine if an element is meaningful for interaction or contains important text."""
         element_type = element_dict.get('type', '')
         
+        # Text content elements we care about
+        TEXT_TYPES = {
+            'XCUIElementTypeStaticText',
+            'XCUIElementTypeTextView',
+            'XCUIElementTypeTextField',
+        }
+        
+        # If strings_only is True, only show text elements with content
+        if self.strings_only:
+            return (element_type in TEXT_TYPES and any([
+                element_dict.get('value'),
+                element_dict.get('label'),
+                element_dict.get('name')
+            ]))
+        
         # Interactive elements we care about
         INTERACTIVE_TYPES = {
             'XCUIElementTypeButton',
@@ -126,13 +144,6 @@ class PageSourceMonitor:
             'XCUIElementTypeSwitch',
             'XCUIElementTypeSlider',
             'XCUIElementTypePickerWheel',
-        }
-        
-        # Text content elements we care about
-        TEXT_TYPES = {
-            'XCUIElementTypeStaticText',
-            'XCUIElementTypeTextView',
-            'XCUIElementTypeTextField',
         }
         
         # Always include interactive elements that are enabled and accessible
@@ -340,8 +351,82 @@ class PageSourceMonitor:
                 type_ = child.get('type', '')
                 label = child.get('label', '')
                 value = child.get('value', '')
+                enabled = child.get('enabled', '') == 'true'
+                accessible = child.get('accessible', '') == 'true'
                 
-                # Create node label
+                # Skip non-meaningful elements in strings_only mode
+                if self.strings_only:
+                    # Interactive elements we want to show
+                    INTERACTIVE_TYPES = {
+                        'XCUIElementTypeButton',
+                        'XCUIElementTypeLink',
+                        'XCUIElementTypeSearchField',
+                        'XCUIElementTypeSwitch',
+                        'XCUIElementTypeSlider',
+                        'XCUIElementTypePickerWheel',
+                        'XCUIElementTypeCell',
+                        'XCUIElementTypeMenuItem',
+                        'XCUIElementTypeTabBar',
+                    }
+                    
+                    # Text elements we want to show (expanded list)
+                    TEXT_TYPES = {
+                        'XCUIElementTypeStaticText',
+                        'XCUIElementTypeTextView',
+                        'XCUIElementTypeTextField',
+                        'XCUIElementTypeSecureTextField',
+                        'XCUIElementTypeText',
+                        'XCUIElementTypeLabel',
+                        'XCUIElementTypeLink',
+                        'XCUIElementTypeButton',  # Buttons often contain text
+                        'XCUIElementTypeCell',    # Cells often contain text
+                        'XCUIElementTypeMenuItem',
+                        'XCUIElementTypeNavigationBar',
+                        'XCUIElementTypeStatusBar',
+                        'XCUIElementTypeHeader',
+                        'XCUIElementTypeTab',
+                        'XCUIElementTypeToolbar',
+                    }
+                    
+                    # Function to check if element has meaningful text
+                    def has_text_content():
+                        text = value or label or name
+                        if not text:
+                            return False
+                        # Skip if it's just a number or single character (unless it's a button)
+                        if type_ != 'XCUIElementTypeButton' and (text.isdigit() or len(text) <= 1):
+                            return False
+                        # Skip if it looks like an internal ID
+                        if text.startswith('_') or '..' in text or '/' in text:
+                            return False
+                        return True
+                    
+                    if type_ in INTERACTIVE_TYPES and enabled and accessible:
+                        # For buttons/links with icons, show the icon name
+                        if 'Button' in type_ and name and any(icon_hint in name.lower() for icon_hint in ['icon', 'image', 'img', 'symbol']):
+                            tree.add(f"[magenta]📎 Icon: {name}[/]")
+                        else:
+                            # Show interactive element with its label/name
+                            action_text = label or name or value
+                            if action_text:
+                                tree.add(f"[bold blue]⚡ {type_.replace('XCUIElementType', '')}: {action_text}[/]")
+                    elif type_ in TEXT_TYPES and has_text_content():
+                        # Show text content
+                        text_content = value or label or name
+                        if text_content:
+                            # Use different colors based on the type of text
+                            if type_ in {'XCUIElementTypeNavigationBar', 'XCUIElementTypeHeader'}:
+                                tree.add(f"[bold yellow]{text_content}[/]")  # Headers in bold yellow
+                            elif type_ in {'XCUIElementTypeStatusBar', 'XCUIElementTypeToolbar'}:
+                                tree.add(f"[dim white]{text_content}[/]")    # Status/toolbar in dim white
+                            else:
+                                tree.add(f"[green]\"{text_content}\"[/]")    # Regular text in green
+                    
+                    # Process children even if we skip this element
+                    self._build_tree(child, tree, depth)
+                    continue
+                
+                # Normal mode - show all element details
                 node_parts = []
                 if type_:
                     node_parts.append(f"[bold cyan]{type_}[/]")
@@ -362,21 +447,24 @@ class PageSourceMonitor:
                 tree.add(f"[red]Error processing element: {str(e)}[/]")
     
     def _save_page_source(self, source: str) -> bool:
-        """Save page source to a file if it has changed."""
+        """Save page source to a file if it has changed and logging is enabled."""
         try:
             if source != self.last_source:
-                # Ensure output directory exists
-                self.output_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Create timestamp and filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = self.output_dir / f"page_source_{timestamp}.xml"
-                
-                # Write file with proper encoding
-                filename.write_text(source, encoding='utf-8')
-                
                 self.changes_count += 1
                 self.last_source = source
+                
+                # Only save to file if logging is enabled
+                if self.enable_logging:
+                    # Ensure output directory exists
+                    self.output_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Create timestamp and filename
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = self.output_dir / f"page_source_{timestamp}.xml"
+                    
+                    # Write file with proper encoding
+                    filename.write_text(source, encoding='utf-8')
+                
                 return True
             return False
         except Exception as e:
@@ -416,7 +504,7 @@ class PageSourceMonitor:
             if not device_manager.driver:
                 await device_manager.initialize_session()
             
-            with Live(self.layout, refresh_per_second=4) as live:
+            with Live(self.layout, refresh_per_second=10) as live:
                 while True:
                     try:
                         # Get current time
@@ -426,12 +514,92 @@ class PageSourceMonitor:
                         source = device_manager.driver.page_source
                         changed = self._save_page_source(source)
                         
-                        # Count tokens
-                        token_count = self._count_tokens(source)
-                        token_info = self._create_token_info(token_count)
-                        
                         # Parse and create tree view
                         tree, tree_dict = self._parse_xml(source)
+                        
+                        # Extract only the meaningful content for token counting
+                        meaningful_content = []
+                        def extract_content(element_dict):
+                            if not element_dict:
+                                return
+                            
+                            element_type = element_dict.get('type', '')
+                            name = element_dict.get('name', '')
+                            label = element_dict.get('label', '')
+                            value = element_dict.get('value', '')
+                            enabled = element_dict.get('enabled') == 'true'
+                            accessible = element_dict.get('accessible') == 'true'
+                            
+                            def has_text_content():
+                                text = value or label or name
+                                if not text:
+                                    return False
+                                # Skip if it's just a number or single character (unless it's a button)
+                                if element_type != 'XCUIElementTypeButton' and (text.isdigit() or len(text) <= 1):
+                                    return False
+                                # Skip if it looks like an internal ID
+                                if text.startswith('_') or '..' in text or '/' in text:
+                                    return False
+                                return True
+                            
+                            # Include text content from any element that might contain text
+                            TEXT_TYPES = {
+                                'XCUIElementTypeStaticText',
+                                'XCUIElementTypeTextView',
+                                'XCUIElementTypeTextField',
+                                'XCUIElementTypeSecureTextField',
+                                'XCUIElementTypeText',
+                                'XCUIElementTypeLabel',
+                                'XCUIElementTypeLink',
+                                'XCUIElementTypeButton',
+                                'XCUIElementTypeCell',
+                                'XCUIElementTypeMenuItem',
+                                'XCUIElementTypeNavigationBar',
+                                'XCUIElementTypeStatusBar',
+                                'XCUIElementTypeHeader',
+                                'XCUIElementTypeTab',
+                                'XCUIElementTypeToolbar',
+                            }
+                            
+                            if element_type in TEXT_TYPES and has_text_content():
+                                text = value or label or name
+                                if text:
+                                    # For UI elements, include their type for context
+                                    if element_type in {
+                                        'XCUIElementTypeNavigationBar',
+                                        'XCUIElementTypeHeader',
+                                        'XCUIElementTypeStatusBar',
+                                        'XCUIElementTypeToolbar',
+                                        'XCUIElementTypeTab'
+                                    }:
+                                        meaningful_content.append(f"{element_type.replace('XCUIElementType', '')}: {text}")
+                                    else:
+                                        meaningful_content.append(text)
+                            
+                            # Include interactive elements separately
+                            elif element_type in {
+                                'XCUIElementTypeButton',
+                                'XCUIElementTypeLink',
+                                'XCUIElementTypeSearchField',
+                                'XCUIElementTypeSwitch',
+                                'XCUIElementTypeSlider',
+                                'XCUIElementTypePickerWheel',
+                            } and enabled and accessible:
+                                text = label or name or value
+                                if text and has_text_content():
+                                    meaningful_content.append(f"{element_type.replace('XCUIElementType', '')}: {text}")
+                            
+                            # Process children
+                            children = element_dict.get('children', [])
+                            for child in children:
+                                extract_content(child)
+                        
+                        # Extract content from the tree
+                        extract_content(tree_dict)
+                        
+                        # Count tokens for meaningful content only
+                        token_count = self._count_tokens(" ".join(meaningful_content))
+                        token_info = self._create_token_info(token_count)
                         
                         # Create diff table if we have previous state
                         diff_table = None
@@ -497,8 +665,8 @@ class PageSourceMonitor:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description='Monitor iOS device page source')
-    parser.add_argument('--interval', type=float, default=1.0,
-                      help='Polling interval in seconds (default: 1.0)')
+    parser.add_argument('--interval', type=float, default=0.25,
+                      help='Polling interval in seconds (default: 0.25)')
     parser.add_argument('--output-dir', type=Path, default=None,
                       help='Directory to save page source logs')
     parser.add_argument('--device-name', type=str, default=Config.DEVICE_NAME,
@@ -507,6 +675,10 @@ async def main() -> None:
                       help=f'iOS version (default: {Config.IOS_VERSION})')
     parser.add_argument('--max-depth', type=int, default=5,
                       help='Maximum depth of the UI tree to display (default: 5)')
+    parser.add_argument('--strings-only', action='store_true',
+                      help='Show only text content elements')
+    parser.add_argument('--enable-logging', action='store_true',
+                      help='Enable saving page source logs to files (disabled by default)')
     
     args = parser.parse_args()
     
@@ -519,7 +691,9 @@ async def main() -> None:
     monitor = PageSourceMonitor(
         interval=args.interval,
         output_dir=args.output_dir,
-        max_depth=args.max_depth
+        max_depth=args.max_depth,
+        strings_only=args.strings_only,
+        enable_logging=args.enable_logging
     )
     await monitor.monitor()
 
