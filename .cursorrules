@@ -1,0 +1,13 @@
+Please use UV inline dependencies.
+
+For example
+
+# /// script
+# dependencies = [
+#   "requests<3",
+#   "rich",
+# ]
+# ///
+
+
+Focus only on iOS.
