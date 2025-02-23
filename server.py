@@ -120,21 +120,6 @@ async def tap_element(element_id: str) -> str:
     except Exception as e:
         return f"Failed to tap element: {str(e)}"
 
-@mcp.tool()
-async def get_device_info() -> Dict[str, Any]:
-    """Get information about the connected device."""
-    global driver
-    if not driver:
-        return {"error": "No active Appium session"}
-    try:
-        return {
-            "platform": driver.capabilities.get("platformName"),
-            "device_name": driver.capabilities.get("deviceName"),
-            "platform_version": driver.capabilities.get("platformVersion"),
-            "automation_name": driver.capabilities.get("automationName")
-        }
-    except Exception as e:
-        return {"error": f"Failed to get device info: {str(e)}"}
 
 async def cleanup():
     """Cleanup resources before shutdown."""
