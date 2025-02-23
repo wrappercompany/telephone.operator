@@ -6,17 +6,20 @@
 #   "fastmcp>=0.1.0",
 #   "urllib3<2.0.0",
 #   "pydantic>=2.0.0",
+#   "libimobiledevice",
 # ]
 # ///
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import asyncio
 import logging
 import datetime
 import urllib3
+import subprocess
+import json
 from pydantic import BaseModel
 
 from mcp.server.fastmcp import FastMCP
@@ -31,12 +34,13 @@ logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
 class Config:
     """Configuration settings for the Appium server."""
-    DEVICE_NAME = "iPhone 16 Pro"
-    IOS_VERSION = "18.2"
+    DEVICE_NAME = "iPhone 16 Pro"  # Fallback simulator name
+    IOS_VERSION = "18.2"  # Fallback iOS version
     APPIUM_HOST = "127.0.0.1"
     APPIUM_PORT = 4723
     LOG_DIR = Path("logs")
     DEFAULT_BUNDLE_ID = "com.apple.mobilesafari"
+    USE_REAL_DEVICE = True  # Prefer real device over simulator
 
 class LocatorStrategy(str, Enum):
     """Valid locator strategies for finding elements."""
@@ -66,6 +70,7 @@ class IOSDeviceManager:
         self.driver: Optional[webdriver.Remote] = None
         self.appium_service: Optional[AppiumService] = None
         self.logger = self._setup_logging()
+        self.device_info: Optional[Dict[str, str]] = None
 
     def _setup_logging(self) -> logging.Logger:
         """Configure logging for the application."""
@@ -90,11 +95,52 @@ class IOSDeviceManager:
             
         return logging.getLogger(__name__)
 
+    def _detect_real_device(self) -> Optional[Dict[str, str]]:
+        """Detect connected iOS device using libimobiledevice."""
+        try:
+            # Get list of connected devices
+            result = subprocess.run(['idevice_id', '-l'], capture_output=True, text=True)
+            if result.returncode != 0 or not result.stdout.strip():
+                self.logger.info("No real devices detected")
+                return None
+
+            udid = result.stdout.strip().split('\n')[0]
+            
+            # Get device info
+            info_result = subprocess.run(['ideviceinfo', '-u', udid], capture_output=True, text=True)
+            if info_result.returncode != 0:
+                return None
+
+            info_lines = info_result.stdout.strip().split('\n')
+            device_info = {}
+            for line in info_lines:
+                if ': ' in line:
+                    key, value = line.split(': ', 1)
+                    device_info[key.strip()] = value.strip()
+
+            return {
+                'udid': udid,
+                'name': device_info.get('DeviceName', 'iPhone'),
+                'version': device_info.get('ProductVersion', Config.IOS_VERSION)
+            }
+        except Exception as e:
+            self.logger.error(f"Error detecting real device: {e}")
+            return None
+
     async def initialize_session(self, bundle_id: str = Config.DEFAULT_BUNDLE_ID):
         """Initialize the Appium session for iOS."""
         try:
+            if Config.USE_REAL_DEVICE:
+                self.device_info = self._detect_real_device()
+                
             await self._start_appium_service()
-            await self._configure_simulator()
+            
+            if self.device_info:
+                self.logger.info(f"Using real device: {self.device_info['name']} ({self.device_info['version']})")
+            else:
+                self.logger.info("Using simulator")
+                await self._configure_simulator()
+                
             await self._create_driver_session(bundle_id)
         except Exception as e:
             self.logger.error(f"Failed to initialize session: {e}")
@@ -141,9 +187,28 @@ class IOSDeviceManager:
         options = XCUITestOptions()
         options.platform_name = "iOS"
         options.automation_name = "XCUITest"
-        options.device_name = Config.DEVICE_NAME
-        options.platform_version = Config.IOS_VERSION
+        
+        if self.device_info:
+            options.device_name = self.device_info['name']
+            options.platform_version = self.device_info['version']
+            options.udid = self.device_info['udid']
+        else:
+            options.device_name = Config.DEVICE_NAME
+            options.platform_version = Config.IOS_VERSION
+            
         options.bundle_id = bundle_id
+
+        # Additional capabilities for real devices
+        if self.device_info:
+            options.additional_capabilities = {
+                'xcodeOrgId': subprocess.getoutput('defaults read com.apple.Xcode XCIDETeamId').strip(),
+                'xcodeSigningId': 'iPhone Developer',
+                'wdaLocalPort': 8100,
+                'useNewWDA': True,
+                'derivedDataPath': str(Path.home() / 'Library/Developer/Xcode/DerivedData'),
+                'preventWDAAttachments': True,
+                'simpleIsVisibleCheck': True
+            }
 
         appium_url = f"http://{Config.APPIUM_HOST}:{Config.APPIUM_PORT}"
         self.driver = webdriver.Remote(appium_url, options=options)
