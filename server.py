@@ -173,6 +173,72 @@ async def press_physical_button(button: str) -> str:
     except Exception as e:
         return f"Failed to press button: {str(e)}"
 
+@mcp.tool()
+async def swipe(direction: str) -> str:
+    """Perform a swipe gesture in the specified direction.
+    
+    Args:
+        direction: The direction to swipe. Valid values are:
+            - "up"
+            - "down"
+            - "left"
+            - "right"
+    """
+    global driver
+    if not driver:
+        return "No active Appium session"
+    
+    valid_directions = ["up", "down", "left", "right"]
+    if direction.lower() not in valid_directions:
+        return f"Invalid direction. Valid options are: {', '.join(valid_directions)}"
+    
+    try:
+        # Get screen dimensions
+        window_size = driver.get_window_size()
+        width = window_size['width']
+        height = window_size['height']
+        
+        # Define swipe coordinates based on direction
+        swipe_params = {
+            "up": {
+                "start_x": width * 0.5,
+                "start_y": height * 0.7,
+                "end_x": width * 0.5,
+                "end_y": height * 0.3
+            },
+            "down": {
+                "start_x": width * 0.5,
+                "start_y": height * 0.3,
+                "end_x": width * 0.5,
+                "end_y": height * 0.7
+            },
+            "left": {
+                "start_x": width * 0.8,
+                "start_y": height * 0.5,
+                "end_x": width * 0.2,
+                "end_y": height * 0.5
+            },
+            "right": {
+                "start_x": width * 0.2,
+                "start_y": height * 0.5,
+                "end_x": width * 0.8,
+                "end_y": height * 0.5
+            }
+        }
+        
+        params = swipe_params[direction.lower()]
+        driver.swipe(
+            params["start_x"],
+            params["start_y"],
+            params["end_x"],
+            params["end_y"],
+            500  # Duration in milliseconds
+        )
+        
+        return f"Successfully performed {direction} swipe"
+    except Exception as e:
+        return f"Failed to perform swipe: {str(e)}"
+
 async def cleanup():
     """Cleanup resources before shutdown."""
     global driver, appium_service
