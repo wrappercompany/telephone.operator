@@ -1,12 +1,22 @@
-# Calculator MCP Server
+# Telephone Operator
 
-A simple MCP server that provides calculator functionality and a sample resource.
+An MCP server that provides iOS device automation capabilities through Appium, primarily focused on iOS 18.2 and iPhone 16 Pro.
 
 ## Features
 
-- Calculator tools for basic arithmetic operations
-- Sample resource demonstration
-- Built using MCP Python SDK
+- iOS Safari automation
+- Device interaction controls
+- Touch gesture simulation
+- Physical button control
+- Element interaction
+- Built using MCP Python SDK and Appium
+
+## Prerequisites
+
+- Xcode with iOS 18.2 simulator
+- Node.js and npm (for Appium)
+- Appium Server
+- Python 3.x
 
 ## Installation
 
@@ -19,11 +29,17 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-2. Create and set up the environment:
+2. Install Appium and required drivers:
+```bash
+npm install -g appium
+appium driver install xcuitest
+```
+
+3. Create and set up the environment:
 ```bash
 # Create project and virtual environment
-uv init calculator-server
-cd calculator-server
+uv init telephone-operator
+cd telephone-operator
 uv venv
 
 # Activate virtual environment
@@ -31,14 +47,11 @@ uv venv
 source .venv/bin/activate
 # On Windows:
 .venv\Scripts\activate
-
-# Install dependencies
-uv add "mcp[cli]"
 ```
 
 ## Running the Server
 
-Run the server using UV:
+Start the server using UV:
 ```bash
 uv run server.py
 ```
@@ -47,27 +60,31 @@ uv run server.py
 
 The server provides the following tools:
 
-1. `add`: Add two numbers together
+1. `get_page_source`: Get the current page source of Safari
+   - Returns: Current page HTML source
+
+2. `tap_element`: Tap an element on screen
    - Parameters:
-     - `a`: First number (float)
-     - `b`: Second number (float)
+     - `element_id`: Element identifier
+     - `by`: Locator strategy (accessibility_id, xpath, name, class_name)
 
-2. `multiply`: Multiply two numbers together
+3. `press_physical_button`: Simulate physical button press
    - Parameters:
-     - `a`: First number (float)
-     - `b`: Second number (float)
+     - `button`: Button to press (home, volumeup, volumedown, power)
 
-## Available Resources
+4. `swipe`: Perform swipe gestures
+   - Parameters:
+     - `direction`: Swipe direction (up, down, left, right)
 
-- `sample_resource`: A simple text resource for demonstration purposes
+5. `send_input`: Input text into elements
+   - Parameters:
+     - `element_id`: Target element identifier
+     - `text`: Text to input
+     - `by`: Locator strategy
 
-## Testing
-
-You can test this server using:
-1. The MCP Inspector tool
-2. Cursor
-3. Claude for Desktop
-4. Any other MCP client
+6. `navigate_to`: Navigate Safari to URL
+   - Parameters:
+     - `url`: Target URL
 
 ## Configuration with Cursor
 
@@ -76,19 +93,17 @@ You can test this server using:
 3. Click "+ Add New MCP Server"
 4. Fill out the form:
    - Type: stdio
-   - Name: calculator
+   - Name: telephone-operator
    - Command: `python3 /absolute/path/to/server.py`
-
-After adding the server, you may need to click the refresh button in the top right corner of the MCP server to populate the tool list.
 
 ## Configuration with Claude for Desktop
 
-Add the following to your Claude for Desktop configuration file:
+Add the following to your Claude for Desktop configuration:
 
 ```json
 {
     "mcpServers": {
-        "calculator": {
+        "telephone-operator": {
             "command": "uv",
             "args": [
                 "--directory",
@@ -101,13 +116,11 @@ Add the following to your Claude for Desktop configuration file:
 }
 ```
 
-Replace `/ABSOLUTE/PATH/TO/PARENT/FOLDER` with the absolute path to the directory containing your server.py file.
-
 For Windows users, use Windows-style paths:
 ```json
 {
     "mcpServers": {
-        "calculator": {
+        "telephone-operator": {
             "command": "uv",
             "args": [
                 "--directory",
@@ -118,4 +131,20 @@ For Windows users, use Windows-style paths:
         }
     }
 }
-``` 
+```
+
+## Logging
+
+The server maintains detailed logs in the `logs` directory, with timestamps for each session.
+
+## Testing
+
+You can test this server using:
+1. The MCP Inspector tool
+2. Cursor
+3. Claude for Desktop
+4. Any other MCP client
+
+## Note
+
+This server is configured to work with iPhone 16 Pro running iOS 18.2. Make sure you have the appropriate simulator installed through Xcode. 
