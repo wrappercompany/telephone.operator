@@ -311,6 +311,38 @@ async def navigate_to(url: str) -> str:
     except Exception as e:
         return f"Failed to navigate: {str(e)}"
 
+@mcp.tool()
+async def launch_app(bundle_id: str) -> str:
+    """Launch an iOS app by its bundle ID.
+    
+    Args:
+        bundle_id: The bundle ID of the app to launch (e.g., "com.apple.mobilesafari")
+    """
+    global driver
+    if driver:
+        try:
+            driver.terminate_app(bundle_id)  # Terminate if already running
+            driver.activate_app(bundle_id)
+            return f"Successfully launched app with bundle ID: {bundle_id}"
+        except Exception as e:
+            return f"Failed to launch app: {str(e)}"
+    
+    # If no session exists, create a new one with the specified app
+    try:
+        appium_url = "http://127.0.0.1:4723"
+        options = XCUITestOptions()
+        options.platform_name = "iOS"
+        options.automation_name = "XCUITest"
+        options.device_name = "iPhone 16 Pro"   
+        options.platform_version = "18.2"
+        options.bundle_id = bundle_id
+        
+        driver = webdriver.Remote(appium_url, options=options)
+        logger.info(f"Successfully launched app with bundle ID: {bundle_id}")
+        return f"Successfully launched app with bundle ID: {bundle_id}"
+    except Exception as e:
+        return f"Failed to launch app: {str(e)}"
+
 async def cleanup():
     """Cleanup resources before shutdown."""
     global driver, appium_service

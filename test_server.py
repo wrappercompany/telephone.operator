@@ -23,7 +23,8 @@ from server import (
     press_physical_button,
     swipe,
     send_input,
-    navigate_to
+    navigate_to,
+    launch_app
 )
 
 # Configure logging
@@ -148,6 +149,31 @@ async def test_send_input():
     result = await send_input("nonexistent_element", "test")
     assert "Failed to send input" in result
     logger.info("Send input to invalid element test passed")
+
+@pytest.mark.asyncio
+async def test_launch_app():
+    """Test launching different iOS apps."""
+    # Test launching Settings app
+    result = await launch_app("com.apple.Preferences")
+    assert "Successfully launched app" in result
+    await asyncio.sleep(1)  # Wait for app to launch
+    
+    # Verify we can get page source from the launched app
+    page_source = await get_page_source()
+    assert page_source != "No active Appium session"
+    assert isinstance(page_source, str)
+    assert len(page_source) > 0
+    
+    # Test launching Safari
+    result = await launch_app("com.apple.mobilesafari")
+    assert "Successfully launched app" in result
+    await asyncio.sleep(1)  # Wait for app to launch
+    
+    # Verify we can interact with Safari
+    result = await navigate_to("https://www.example.com")
+    assert "Successfully navigated" in result
+    
+    logger.info("Launch app test passed")
 
 if __name__ == "__main__":
     import sys
