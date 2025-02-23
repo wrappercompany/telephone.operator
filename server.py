@@ -46,8 +46,10 @@ logging.basicConfig(
 # Get our application logger
 logger = logging.getLogger(__name__)
 
-# Suppress uvicorn access logs
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+# Suppress uvicorn access logs and other noisy loggers
+logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
+logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
+logging.getLogger("fastapi").setLevel(logging.ERROR)
 
 # Initialize FastMCP server
 mcp = FastMCP("appium-device-server")
@@ -60,20 +62,39 @@ async def initialize_appium_session():
     """Initialize the Appium session for iOS."""
     global driver, appium_service
     
-    appium_log = os.path.join(log_directory, f"appium_{current_time}.log")
-    
-    # Start Appium service
+    # Start Appium service with output to terminal
     appium_service = AppiumService()
     appium_service.start(
         args=[
             '--address', '127.0.0.1',
             '-p', '4723',
-            '--log', appium_log,
-            '--log-level', 'error'  # Only log errors from Appium server
+            '--log-level', 'info',  # Changed to info to see more details
+            '--local-timezone',     # Use local timezone for timestamps
+            '--debug-log-spacing'   # Better log formatting
         ],
         timeout_ms=20000
     )
     logger.info("Appium server started")
+    
+    # Configure simulator status bar
+    try:
+        import subprocess
+        logger.info("Configuring simulator status bar...")
+        subprocess.run([
+            'xcrun', 'simctl', 'status_bar', 'iPhone 16 Pro', 'override',
+            '--time', '9:41',
+            '--batteryState', 'charged',
+            '--batteryLevel', '100',
+            '--cellularMode', 'active',
+            '--cellularBars', '4',
+            '--operatorName', 'Carrier',
+            '--dataNetwork', '5g-uc',
+            '--wifiMode', 'active',
+            '--wifiBars', '3'
+        ], check=True)
+        logger.info("Status bar configured successfully")
+    except Exception as e:
+        logger.warning(f"Failed to configure status bar: {str(e)}")
     
     # Default Appium server URL
     appium_url = "http://127.0.0.1:4723"
@@ -83,7 +104,8 @@ async def initialize_appium_session():
     options.automation_name = "XCUITest"
     options.device_name = "iPhone 16 Pro"   
     options.platform_version = "18.2"
-    
+
+
     # Use Safari's bundle ID instead of an app path
     options.bundle_id = "com.apple.mobilesafari"
     logger.info("Initializing iOS Safari session...")
