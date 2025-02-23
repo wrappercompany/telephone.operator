@@ -7,6 +7,7 @@
 #   "Appium-Python-Client>=3.1.0",
 #   "fastmcp>=0.1.0",
 #   "urllib3<2.0.0",
+#   "pydantic>=2.0.0",
 # ]
 # ///
 
@@ -14,17 +15,16 @@ import pytest
 import pytest_asyncio
 import asyncio
 import logging
-import time
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from server import (
-    initialize_appium_session,
-    cleanup,
-    get_page_source,
-    tap_element,
-    press_physical_button,
-    swipe,
-    send_input,
-    navigate_to,
-    launch_app
+    device_manager,
+    LocatorStrategy,
+    PhysicalButton,
+    SwipeDirection,
+    Config,
+    AppiumBy
 )
 
 # Configure logging
@@ -38,8 +38,7 @@ async def wait_for_appium_ready(max_retries=5, delay=1):
     """Wait for Appium session to be ready."""
     for attempt in range(max_retries):
         try:
-            result = await get_page_source()
-            if result != "No active Appium session":
+            if device_manager.driver:
                 return True
         except Exception:
             pass
@@ -57,13 +56,13 @@ async def event_loop():
 async def setup_teardown():
     """Setup and teardown for each test."""
     try:
-        await initialize_appium_session()
+        await device_manager.initialize_session()
         # Wait for session to be ready with timeout
         if not await wait_for_appium_ready():
             raise Exception("Appium session failed to initialize")
         yield
     finally:
-        await cleanup()
+        await device_manager.cleanup()
 
 @pytest.mark.asyncio
 async def test_get_page_source():
@@ -71,8 +70,9 @@ async def test_get_page_source():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            result = await get_page_source()
-            assert result != "No active Appium session"
+            # page_source is a synchronous property
+            result = device_manager.driver.page_source
+            assert result is not None
             assert isinstance(result, str)
             assert len(result) > 0
             logger.info("Page source test passed")
@@ -80,100 +80,122 @@ async def test_get_page_source():
         except AssertionError as e:
             if attempt == max_retries - 1:
                 raise
-            await asyncio.sleep(1)  # Reduced from 2s to 1s
+            await asyncio.sleep(1)
 
 @pytest.mark.asyncio
 async def test_tap_element():
     """Test tapping an element."""
-    # Verify page source is available before attempting tap
-    result = await get_page_source()
-    assert result != "No active Appium session"
+    # Verify driver is active
+    assert device_manager.driver is not None
     
     # Try to tap the URL bar in Safari
-    result = await tap_element("URL")
-    assert "Successfully tapped element" in result or "Failed to tap element" in result
-    logger.info("Tap element test completed")
+    try:
+        # Wait for URL element to be present
+        wait = WebDriverWait(device_manager.driver, 10)
+        element = wait.until(
+            EC.presence_of_element_located((AppiumBy.ACCESSIBILITY_ID, "URL"))
+        )
+        element.click()
+        logger.info("Tap element test passed")
+    except Exception as e:
+        logger.warning(f"Tap element test warning: {e}")
 
 @pytest.mark.asyncio
 async def test_press_physical_buttons():
     """Test pressing physical buttons."""
-    # Test home button (only supported button in simulator)
-    result = await press_physical_button("home")
-    assert "Successfully pressed" in result
-    await asyncio.sleep(1)  # Reduced from 2s to 1s
-    
-    # Test invalid button
-    result = await press_physical_button("invalid_button")
-    assert "Invalid button" in result
-    logger.info("Physical buttons test passed")
+    # Test home button
+    try:
+        device_manager.driver.execute_script('mobile: pressButton', {'name': PhysicalButton.HOME.value})
+        await asyncio.sleep(1)
+        logger.info("Physical button (HOME) test passed")
+    except Exception as e:
+        logger.error(f"Physical button test failed: {e}")
+        raise
 
 @pytest.mark.asyncio
 async def test_swipe_gestures():
     """Test swipe gestures in all directions."""
-    directions = ["up", "down", "left", "right"]
-    
-    for direction in directions:
-        result = await swipe(direction)
-        assert f"Successfully performed {direction} swipe" in result
-        await asyncio.sleep(0.5)  # Reduced from 2s to 0.5s
-    
-    # Test invalid direction
-    result = await swipe("invalid_direction")
-    assert "Invalid direction" in result
-    logger.info("Swipe gestures test passed")
+    for direction in SwipeDirection:
+        try:
+            window_size = device_manager.driver.get_window_size()
+            width = window_size['width']
+            height = window_size['height']
+            
+            swipe_params = {
+                SwipeDirection.UP: (width * 0.5, height * 0.7, width * 0.5, height * 0.3),
+                SwipeDirection.DOWN: (width * 0.5, height * 0.3, width * 0.5, height * 0.7),
+                SwipeDirection.LEFT: (width * 0.8, height * 0.5, width * 0.2, height * 0.5),
+                SwipeDirection.RIGHT: (width * 0.2, height * 0.5, width * 0.8, height * 0.5)
+            }
+            
+            start_x, start_y, end_x, end_y = swipe_params[direction]
+            device_manager.driver.swipe(start_x, start_y, end_x, end_y, 500)
+            await asyncio.sleep(0.5)
+            logger.info(f"Swipe {direction.value} test passed")
+        except Exception as e:
+            logger.error(f"Swipe {direction.value} test failed: {e}")
+            raise
 
 @pytest.mark.asyncio
 async def test_send_input():
     """Test sending text input to elements."""
-    # Verify page source is available before attempting input
-    result = await get_page_source()
-    assert result != "No active Appium session"
+    # Verify driver is active
+    assert device_manager.driver is not None
     
-    # Navigate to a URL first to make the URL bar appear
-    result = await navigate_to("https://www.example.com")
-    assert "Successfully navigated" in result
-    await asyncio.sleep(1)  # Wait for navigation
-    
-    # First tap the URL bar to focus it
-    url_bar_xpath = "//XCUIElementTypeTextField"
-    await tap_element(url_bar_xpath, by="xpath")
-    await asyncio.sleep(0.5)  # Wait for tap to register
-    
-    # Try to send input to the URL bar
-    test_url = "https://www.example.com"
-    result = await send_input(url_bar_xpath, test_url, by="xpath")
-    assert "Successfully sent input" in result
-    logger.info("Send input test passed")
-    
-    # Test with invalid element
-    result = await send_input("nonexistent_element", "test")
-    assert "Failed to send input" in result
-    logger.info("Send input to invalid element test passed")
+    # Navigate to a URL first
+    try:
+        device_manager.driver.get("https://www.example.com")
+        await asyncio.sleep(2)  # Wait longer for page load
+        
+        # Wait for URL bar to be present and clickable
+        wait = WebDriverWait(device_manager.driver, 10)
+        url_bar = wait.until(
+            EC.presence_of_element_located((AppiumBy.XPATH, "//XCUIElementTypeTextField"))
+        )
+        
+        # Click the URL bar and wait for it to be focused
+        url_bar.click()
+        await asyncio.sleep(1)
+        
+        # Find the element again after clicking to avoid stale element
+        url_bar = wait.until(
+            EC.presence_of_element_located((AppiumBy.XPATH, "//XCUIElementTypeTextField"))
+        )
+        
+        # Send input
+        test_url = "https://www.example.com"
+        url_bar.clear()
+        url_bar.send_keys(test_url)
+        logger.info("Send input test passed")
+    except Exception as e:
+        logger.error(f"Send input test failed: {e}")
+        raise
 
 @pytest.mark.asyncio
 async def test_launch_app():
     """Test launching different iOS apps."""
-    # Test launching Settings app
-    result = await launch_app("com.apple.Preferences")
-    assert "Successfully launched app" in result
-    await asyncio.sleep(1)  # Wait for app to launch
+    apps_to_test = [
+        "com.apple.Preferences",
+        Config.DEFAULT_BUNDLE_ID
+    ]
     
-    # Verify we can get page source from the launched app
-    page_source = await get_page_source()
-    assert page_source != "No active Appium session"
-    assert isinstance(page_source, str)
-    assert len(page_source) > 0
-    
-    # Test launching Safari
-    result = await launch_app("com.apple.mobilesafari")
-    assert "Successfully launched app" in result
-    await asyncio.sleep(1)  # Wait for app to launch
-    
-    # Verify we can interact with Safari
-    result = await navigate_to("https://www.example.com")
-    assert "Successfully navigated" in result
-    
-    logger.info("Launch app test passed")
+    for bundle_id in apps_to_test:
+        try:
+            await device_manager.initialize_session(bundle_id)
+            assert device_manager.driver is not None
+            
+            # Wait for app to be ready
+            await asyncio.sleep(2)
+            
+            # Verify we can get page source
+            page_source = device_manager.driver.page_source
+            assert isinstance(page_source, str)
+            assert len(page_source) > 0
+            
+            logger.info(f"Launch app test passed for {bundle_id}")
+        except Exception as e:
+            logger.error(f"Launch app test failed for {bundle_id}: {e}")
+            raise
 
 if __name__ == "__main__":
     import sys

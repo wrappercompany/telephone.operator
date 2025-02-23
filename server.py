@@ -5,290 +5,240 @@
 #   "Appium-Python-Client>=3.1.0",
 #   "fastmcp>=0.1.0",
 #   "urllib3<2.0.0",
+#   "pydantic>=2.0.0",
 # ]
 # ///
 
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, Any, Optional
+from pathlib import Path
+import asyncio
+import logging
+import datetime
+import urllib3
+from pydantic import BaseModel
+
 from mcp.server.fastmcp import FastMCP
-from typing import Dict, Any
 from appium import webdriver
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.appium_service import AppiumService
 from appium.webdriver.common.appiumby import AppiumBy
-import asyncio
-import os
-import logging
-import datetime
-import urllib3
 
 # Suppress urllib3 connection warnings
 urllib3.disable_warnings(urllib3.exceptions.NewConnectionError)
 logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
-# Configure logging
-log_directory = "logs"
-if not os.path.exists(log_directory):
-    os.makedirs(log_directory)
+class Config:
+    """Configuration settings for the Appium server."""
+    DEVICE_NAME = "iPhone 16 Pro"
+    IOS_VERSION = "18.2"
+    APPIUM_HOST = "127.0.0.1"
+    APPIUM_PORT = 4723
+    LOG_DIR = Path("logs")
+    DEFAULT_BUNDLE_ID = "com.apple.mobilesafari"
 
-current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = os.path.join(log_directory, f"app_{current_time}.log")
+class LocatorStrategy(str, Enum):
+    """Valid locator strategies for finding elements."""
+    ACCESSIBILITY_ID = "accessibility_id"
+    XPATH = "xpath"
+    NAME = "name"
+    CLASS_NAME = "class_name"
 
-# Configure root logger
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
+class PhysicalButton(str, Enum):
+    """Valid physical buttons that can be pressed."""
+    HOME = "home"
+    VOLUME_UP = "volumeUp"
+    VOLUME_DOWN = "volumeDown"
+    POWER = "power"
 
-# Get our application logger
-logger = logging.getLogger(__name__)
+class SwipeDirection(str, Enum):
+    """Valid swipe directions."""
+    UP = "up"
+    DOWN = "down"
+    LEFT = "left"
+    RIGHT = "right"
 
-# Suppress uvicorn access logs and other noisy loggers
-logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
-logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
-logging.getLogger("fastapi").setLevel(logging.ERROR)
-
-# Initialize FastMCP server
-mcp = FastMCP("appium-device-server")
-
-# Global variables
-driver = None
-appium_service = None
-
-async def initialize_appium_session():
-    """Initialize the Appium session for iOS."""
-    global driver, appium_service
+class IOSDeviceManager:
+    """Manages iOS device interactions through Appium."""
     
-    # Start Appium service with output to terminal
-    appium_service = AppiumService()
-    appium_service.start(
-        args=[
-            '--address', '127.0.0.1',
-            '-p', '4723',
-            '--log-level', 'info',  # Changed to info to see more details
-            '--local-timezone',     # Use local timezone for timestamps
-            '--debug-log-spacing'   # Better log formatting
-        ],
-        timeout_ms=20000
-    )
-    logger.info("Appium server started")
-    
-    # Configure simulator status bar
-    try:
+    def __init__(self):
+        self.driver: Optional[webdriver.Remote] = None
+        self.appium_service: Optional[AppiumService] = None
+        self.logger = self._setup_logging()
+
+    def _setup_logging(self) -> logging.Logger:
+        """Configure logging for the application."""
+        Config.LOG_DIR.mkdir(exist_ok=True)
+        
+        current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = Config.LOG_DIR / f"app_{current_time}.log"
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(message)s',
+            datefmt='%H:%M:%S',
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
+        )
+        
+        # Suppress noisy loggers
+        for logger_name in ["uvicorn.access", "uvicorn.error", "fastapi"]:
+            logging.getLogger(logger_name).setLevel(logging.ERROR)
+            
+        return logging.getLogger(__name__)
+
+    async def initialize_session(self, bundle_id: str = Config.DEFAULT_BUNDLE_ID):
+        """Initialize the Appium session for iOS."""
+        try:
+            await self._start_appium_service()
+            await self._configure_simulator()
+            await self._create_driver_session(bundle_id)
+        except Exception as e:
+            self.logger.error(f"Failed to initialize session: {e}")
+            await self.cleanup()
+            raise
+
+    async def _start_appium_service(self):
+        """Start the Appium server service."""
+        self.appium_service = AppiumService()
+        self.appium_service.start(
+            args=[
+                '--address', Config.APPIUM_HOST,
+                '-p', str(Config.APPIUM_PORT),
+                '--log-level', 'info',
+                '--local-timezone',
+                '--debug-log-spacing'
+            ],
+            timeout_ms=20000
+        )
+        self.logger.info("Appium server started")
+
+    async def _configure_simulator(self):
+        """Configure simulator status bar and settings."""
         import subprocess
-        logger.info("Configuring simulator status bar...")
-        subprocess.run([
-            'xcrun', 'simctl', 'status_bar', 'iPhone 16 Pro', 'override',
-            '--time', '9:41',
-            '--batteryState', 'charged',
-            '--batteryLevel', '100',
-            '--cellularMode', 'active',
-            '--cellularBars', '4',
-            '--operatorName', 'Carrier',
-            '--dataNetwork', '5g-uc',
-            '--wifiMode', 'active',
-            '--wifiBars', '3'
-        ], check=True)
-        logger.info("Status bar configured successfully")
-    except Exception as e:
-        logger.warning(f"Failed to configure status bar: {str(e)}")
-    
-    # Default Appium server URL
-    appium_url = "http://127.0.0.1:4723"
-    
-    options = XCUITestOptions()
-    options.platform_name = "iOS"
-    options.automation_name = "XCUITest"
-    options.device_name = "iPhone 16 Pro"   
-    options.platform_version = "18.2"
+        try:
+            subprocess.run([
+                'xcrun', 'simctl', 'status_bar', Config.DEVICE_NAME, 'override',
+                '--time', '9:41',
+                '--batteryState', 'charged',
+                '--batteryLevel', '100',
+                '--cellularMode', 'active',
+                '--cellularBars', '4',
+                '--operatorName', 'Carrier',
+                '--dataNetwork', '5g-uc',
+                '--wifiMode', 'active',
+                '--wifiBars', '3'
+            ], check=True)
+            self.logger.info("Simulator status bar configured")
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"Failed to configure simulator: {e}")
 
+    async def _create_driver_session(self, bundle_id: str):
+        """Create a new WebDriver session."""
+        options = XCUITestOptions()
+        options.platform_name = "iOS"
+        options.automation_name = "XCUITest"
+        options.device_name = Config.DEVICE_NAME
+        options.platform_version = Config.IOS_VERSION
+        options.bundle_id = bundle_id
 
-    # Use Safari's bundle ID instead of an app path
-    options.bundle_id = "com.apple.mobilesafari"
-    logger.info("Initializing iOS Safari session...")
+        appium_url = f"http://{Config.APPIUM_HOST}:{Config.APPIUM_PORT}"
+        self.driver = webdriver.Remote(appium_url, options=options)
+        self.logger.info(f"iOS session initialized with {bundle_id}")
 
-    try:
-        driver = webdriver.Remote(appium_url, options=options)
-        logger.info("iOS session initialized successfully")
-        logger.debug(f"Device capabilities: {driver.capabilities}")  # Move capabilities to debug level
-    except Exception as e:
-        logger.error(f"Session initialization failed: {str(e)}")
-        if appium_service:
-            logger.info("Stopping Appium service")
-            appium_service.stop()
-        raise
+    async def cleanup(self):
+        """Cleanup resources."""
+        if self.driver:
+            self.driver.quit()
+        if self.appium_service:
+            self.appium_service.stop()
+
+# Initialize global instances
+device_manager = IOSDeviceManager()
+mcp = FastMCP("appium-device-server")
 
 @mcp.tool()
 async def get_page_source() -> str:
     """Get the current page source of the application."""
-    global driver
-    if not driver:
+    if not device_manager.driver:
         return "No active Appium session"
-    return driver.page_source
+    return device_manager.driver.page_source
 
 @mcp.tool()
-async def tap_element(element_id: str, by: str = "accessibility_id") -> str:
-    """Tap an element by its identifier.
-    
-    Args:
-        element_id: The identifier of the element to tap
-        by: The locator strategy to use. Valid values are:
-            - "accessibility_id"
-            - "xpath"
-            - "name"
-            - "class_name"
-    """
-    global driver
-    if not driver:
+async def tap_element(element_id: str, by: LocatorStrategy = LocatorStrategy.ACCESSIBILITY_ID) -> str:
+    """Tap an element by its identifier."""
+    if not device_manager.driver:
         return "No active Appium session"
     
-    locator_strategies = {
-        "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
-        "xpath": AppiumBy.XPATH,
-        "name": AppiumBy.NAME,
-        "class_name": AppiumBy.CLASS_NAME
+    locator_map = {
+        LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
+        LocatorStrategy.XPATH: AppiumBy.XPATH,
+        LocatorStrategy.NAME: AppiumBy.NAME,
+        LocatorStrategy.CLASS_NAME: AppiumBy.CLASS_NAME
     }
     
-    if by not in locator_strategies:
-        return f"Invalid locator strategy. Valid options are: {', '.join(locator_strategies.keys())}"
-    
     try:
-        element = driver.find_element(by=locator_strategies[by], value=element_id)
+        element = device_manager.driver.find_element(by=locator_map[by], value=element_id)
         element.click()
         return f"Successfully tapped element with {by}: {element_id}"
     except Exception as e:
         return f"Failed to tap element: {str(e)}"
 
 @mcp.tool()
-async def press_physical_button(button: str) -> str:
-    """Press a physical button on the iOS device.
-    
-    Args:
-        button: The button to press. Valid values are:
-            - "home"
-            - "volumeup"
-            - "volumedown"
-            - "power"
-    """
-    global driver
-    if not driver:
+async def press_physical_button(button: PhysicalButton) -> str:
+    """Press a physical button on the iOS device."""
+    if not device_manager.driver:
         return "No active Appium session"
     
-    valid_buttons = {
-        "home": "home",
-        "volumeup": "volumeUp",
-        "volumedown": "volumeDown",
-        "power": "power"
-    }
-    
     try:
-        if button.lower() not in valid_buttons:
-            return f"Invalid button. Valid options are: {', '.join(valid_buttons.keys())}"
-            
-        driver.execute_script('mobile: pressButton', {'name': valid_buttons[button.lower()]})
-        return f"Successfully pressed {button} button"
+        device_manager.driver.execute_script('mobile: pressButton', {'name': button.value})
+        return f"Successfully pressed {button.name} button"
     except Exception as e:
         return f"Failed to press button: {str(e)}"
 
 @mcp.tool()
-async def swipe(direction: str) -> str:
-    """Perform a swipe gesture in the specified direction.
-    
-    Args:
-        direction: The direction to swipe. Valid values are:
-            - "up"
-            - "down"
-            - "left"
-            - "right"
-    """
-    global driver
-    if not driver:
+async def swipe(direction: SwipeDirection) -> str:
+    """Perform a swipe gesture in the specified direction."""
+    if not device_manager.driver:
         return "No active Appium session"
     
-    valid_directions = ["up", "down", "left", "right"]
-    if direction.lower() not in valid_directions:
-        return f"Invalid direction. Valid options are: {', '.join(valid_directions)}"
-    
     try:
-        # Get screen dimensions
-        window_size = driver.get_window_size()
+        window_size = device_manager.driver.get_window_size()
         width = window_size['width']
         height = window_size['height']
         
-        # Define swipe coordinates based on direction
         swipe_params = {
-            "up": {
-                "start_x": width * 0.5,
-                "start_y": height * 0.7,
-                "end_x": width * 0.5,
-                "end_y": height * 0.3
-            },
-            "down": {
-                "start_x": width * 0.5,
-                "start_y": height * 0.3,
-                "end_x": width * 0.5,
-                "end_y": height * 0.7
-            },
-            "left": {
-                "start_x": width * 0.8,
-                "start_y": height * 0.5,
-                "end_x": width * 0.2,
-                "end_y": height * 0.5
-            },
-            "right": {
-                "start_x": width * 0.2,
-                "start_y": height * 0.5,
-                "end_x": width * 0.8,
-                "end_y": height * 0.5
-            }
+            SwipeDirection.UP: (width * 0.5, height * 0.7, width * 0.5, height * 0.3),
+            SwipeDirection.DOWN: (width * 0.5, height * 0.3, width * 0.5, height * 0.7),
+            SwipeDirection.LEFT: (width * 0.8, height * 0.5, width * 0.2, height * 0.5),
+            SwipeDirection.RIGHT: (width * 0.2, height * 0.5, width * 0.8, height * 0.5)
         }
         
-        params = swipe_params[direction.lower()]
-        driver.swipe(
-            params["start_x"],
-            params["start_y"],
-            params["end_x"],
-            params["end_y"],
-            500  # Duration in milliseconds
-        )
-        
-        return f"Successfully performed {direction} swipe"
+        start_x, start_y, end_x, end_y = swipe_params[direction]
+        device_manager.driver.swipe(start_x, start_y, end_x, end_y, 500)
+        return f"Successfully performed {direction.value} swipe"
     except Exception as e:
         return f"Failed to perform swipe: {str(e)}"
 
 @mcp.tool()
-async def send_input(element_id: str, text: str, by: str = "accessibility_id") -> str:
-    """Send text input to an element by its identifier.
-    
-    Args:
-        element_id: The identifier of the element to send input to
-        text: The text to input into the element
-        by: The locator strategy to use. Valid values are:
-            - "accessibility_id"
-            - "xpath"
-            - "name"
-            - "class_name"
-    """
-    global driver
-    if not driver:
+async def send_input(element_id: str, text: str, by: LocatorStrategy = LocatorStrategy.ACCESSIBILITY_ID) -> str:
+    """Send text input to an element by its identifier."""
+    if not device_manager.driver:
         return "No active Appium session"
     
-    locator_strategies = {
-        "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
-        "xpath": AppiumBy.XPATH,
-        "name": AppiumBy.NAME,
-        "class_name": AppiumBy.CLASS_NAME
+    locator_map = {
+        LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
+        LocatorStrategy.XPATH: AppiumBy.XPATH,
+        LocatorStrategy.NAME: AppiumBy.NAME,
+        LocatorStrategy.CLASS_NAME: AppiumBy.CLASS_NAME
     }
     
-    if by not in locator_strategies:
-        return f"Invalid locator strategy. Valid options are: {', '.join(locator_strategies.keys())}"
-    
     try:
-        element = driver.find_element(by=locator_strategies[by], value=element_id)
-        element.clear()  # Clear any existing text
+        element = device_manager.driver.find_element(by=locator_map[by], value=element_id)
+        element.clear()
         element.send_keys(text)
         return f"Successfully sent input '{text}' to element with {by}: {element_id}"
     except Exception as e:
@@ -296,68 +246,33 @@ async def send_input(element_id: str, text: str, by: str = "accessibility_id") -
 
 @mcp.tool()
 async def navigate_to(url: str) -> str:
-    """Navigate to a URL in Safari.
-    
-    Args:
-        url: The URL to navigate to
-    """
-    global driver
-    if not driver:
+    """Navigate to a URL in Safari."""
+    if not device_manager.driver:
         return "No active Appium session"
     
     try:
-        driver.get(url)
+        device_manager.driver.get(url)
         return f"Successfully navigated to {url}"
     except Exception as e:
         return f"Failed to navigate: {str(e)}"
 
 @mcp.tool()
 async def launch_app(bundle_id: str) -> str:
-    """Launch an iOS app by its bundle ID.
-    
-    Args:
-        bundle_id: The bundle ID of the app to launch (e.g., "com.apple.mobilesafari")
-    """
-    global driver
-    if driver:
-        try:
-            driver.terminate_app(bundle_id)  # Terminate if already running
-            driver.activate_app(bundle_id)
-            return f"Successfully launched app with bundle ID: {bundle_id}"
-        except Exception as e:
-            return f"Failed to launch app: {str(e)}"
-    
-    # If no session exists, create a new one with the specified app
+    """Launch an iOS app by its bundle ID."""
     try:
-        appium_url = "http://127.0.0.1:4723"
-        options = XCUITestOptions()
-        options.platform_name = "iOS"
-        options.automation_name = "XCUITest"
-        options.device_name = "iPhone 16 Pro"   
-        options.platform_version = "18.2"
-        options.bundle_id = bundle_id
+        if device_manager.driver:
+            device_manager.driver.terminate_app(bundle_id)
+            device_manager.driver.activate_app(bundle_id)
+            return f"Successfully launched app with bundle ID: {bundle_id}"
         
-        driver = webdriver.Remote(appium_url, options=options)
-        logger.info(f"Successfully launched app with bundle ID: {bundle_id}")
+        await device_manager.initialize_session(bundle_id)
         return f"Successfully launched app with bundle ID: {bundle_id}"
     except Exception as e:
         return f"Failed to launch app: {str(e)}"
 
-async def cleanup():
-    """Cleanup resources before shutdown."""
-    global driver, appium_service
-    if driver:
-        driver.quit()
-    if appium_service:
-        appium_service.stop()
-
 if __name__ == "__main__":
     try:
-        # Initialize Appium session before starting the server
-        asyncio.run(initialize_appium_session())
-        
-        # Initialize and run the server with SSE transport
+        asyncio.run(device_manager.initialize_session())
         mcp.run(transport='sse')
     finally:
-        # Ensure cleanup runs
-        asyncio.run(cleanup()) 
+        asyncio.run(device_manager.cleanup()) 
