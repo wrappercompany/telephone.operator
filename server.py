@@ -142,6 +142,36 @@ async def tap_element(element_id: str) -> str:
     except Exception as e:
         return f"Failed to tap element: {str(e)}"
 
+@mcp.tool()
+async def press_physical_button(button: str) -> str:
+    """Press a physical button on the iOS device.
+    
+    Args:
+        button: The button to press. Valid values are:
+            - "home"
+            - "volumeup"
+            - "volumedown"
+            - "power"
+    """
+    global driver
+    if not driver:
+        return "No active Appium session"
+    
+    valid_buttons = {
+        "home": "home",
+        "volumeup": "volumeUp",
+        "volumedown": "volumeDown",
+        "power": "power"
+    }
+    
+    try:
+        if button.lower() not in valid_buttons:
+            return f"Invalid button. Valid options are: {', '.join(valid_buttons.keys())}"
+            
+        driver.execute_script('mobile: pressButton', {'name': valid_buttons[button.lower()]})
+        return f"Successfully pressed {button} button"
+    except Exception as e:
+        return f"Failed to press button: {str(e)}"
 
 async def cleanup():
     """Cleanup resources before shutdown."""
