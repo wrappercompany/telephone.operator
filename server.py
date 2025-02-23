@@ -130,15 +130,35 @@ async def get_page_source() -> str:
     return driver.page_source
 
 @mcp.tool()
-async def tap_element(element_id: str) -> str:
-    """Tap an element by its ID/accessibility identifier."""
+async def tap_element(element_id: str, by: str = "accessibility_id") -> str:
+    """Tap an element by its identifier.
+    
+    Args:
+        element_id: The identifier of the element to tap
+        by: The locator strategy to use. Valid values are:
+            - "accessibility_id"
+            - "xpath"
+            - "name"
+            - "class_name"
+    """
     global driver
     if not driver:
         return "No active Appium session"
+    
+    locator_strategies = {
+        "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
+        "xpath": AppiumBy.XPATH,
+        "name": AppiumBy.NAME,
+        "class_name": AppiumBy.CLASS_NAME
+    }
+    
+    if by not in locator_strategies:
+        return f"Invalid locator strategy. Valid options are: {', '.join(locator_strategies.keys())}"
+    
     try:
-        element = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value=element_id)
+        element = driver.find_element(by=locator_strategies[by], value=element_id)
         element.click()
-        return f"Successfully tapped element with ID: {element_id}"
+        return f"Successfully tapped element with {by}: {element_id}"
     except Exception as e:
         return f"Failed to tap element: {str(e)}"
 
@@ -238,6 +258,58 @@ async def swipe(direction: str) -> str:
         return f"Successfully performed {direction} swipe"
     except Exception as e:
         return f"Failed to perform swipe: {str(e)}"
+
+@mcp.tool()
+async def send_input(element_id: str, text: str, by: str = "accessibility_id") -> str:
+    """Send text input to an element by its identifier.
+    
+    Args:
+        element_id: The identifier of the element to send input to
+        text: The text to input into the element
+        by: The locator strategy to use. Valid values are:
+            - "accessibility_id"
+            - "xpath"
+            - "name"
+            - "class_name"
+    """
+    global driver
+    if not driver:
+        return "No active Appium session"
+    
+    locator_strategies = {
+        "accessibility_id": AppiumBy.ACCESSIBILITY_ID,
+        "xpath": AppiumBy.XPATH,
+        "name": AppiumBy.NAME,
+        "class_name": AppiumBy.CLASS_NAME
+    }
+    
+    if by not in locator_strategies:
+        return f"Invalid locator strategy. Valid options are: {', '.join(locator_strategies.keys())}"
+    
+    try:
+        element = driver.find_element(by=locator_strategies[by], value=element_id)
+        element.clear()  # Clear any existing text
+        element.send_keys(text)
+        return f"Successfully sent input '{text}' to element with {by}: {element_id}"
+    except Exception as e:
+        return f"Failed to send input: {str(e)}"
+
+@mcp.tool()
+async def navigate_to(url: str) -> str:
+    """Navigate to a URL in Safari.
+    
+    Args:
+        url: The URL to navigate to
+    """
+    global driver
+    if not driver:
+        return "No active Appium session"
+    
+    try:
+        driver.get(url)
+        return f"Successfully navigated to {url}"
+    except Exception as e:
+        return f"Failed to navigate: {str(e)}"
 
 async def cleanup():
     """Cleanup resources before shutdown."""

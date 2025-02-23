@@ -21,7 +21,9 @@ from server import (
     get_page_source,
     tap_element,
     press_physical_button,
-    swipe
+    swipe,
+    send_input,
+    navigate_to
 )
 
 # Configure logging
@@ -119,5 +121,45 @@ async def test_swipe_gestures():
     assert "Invalid direction" in result
     logger.info("Swipe gestures test passed")
 
+@pytest.mark.asyncio
+async def test_send_input():
+    """Test sending text input to elements."""
+    # Verify page source is available before attempting input
+    result = await get_page_source()
+    assert result != "No active Appium session"
+    
+    # Navigate to a URL first to make the URL bar appear
+    result = await navigate_to("https://www.example.com")
+    assert "Successfully navigated" in result
+    await asyncio.sleep(1)  # Wait for navigation
+    
+    # First tap the URL bar to focus it
+    url_bar_xpath = "//XCUIElementTypeTextField"
+    await tap_element(url_bar_xpath, by="xpath")
+    await asyncio.sleep(0.5)  # Wait for tap to register
+    
+    # Try to send input to the URL bar
+    test_url = "https://www.example.com"
+    result = await send_input(url_bar_xpath, test_url, by="xpath")
+    assert "Successfully sent input" in result
+    logger.info("Send input test passed")
+    
+    # Test with invalid element
+    result = await send_input("nonexistent_element", "test")
+    assert "Failed to send input" in result
+    logger.info("Send input to invalid element test passed")
+
 if __name__ == "__main__":
-    pytest.main(["-v", "--asyncio-mode=strict", __file__]) 
+    import sys
+    
+    # Default pytest arguments
+    pytest_args = ["-v", "--asyncio-mode=strict"]
+    
+    # Add --lf flag if specified to run only failed tests
+    if len(sys.argv) > 1 and sys.argv[1] == "--lf":
+        pytest_args.extend(["--lf"])
+    elif len(sys.argv) > 1 and sys.argv[1] == "--failed-first":
+        pytest_args.extend(["--failed-first"])
+    
+    pytest_args.append(__file__)
+    pytest.main(pytest_args) 
