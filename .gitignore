@@ -4,3 +4,6 @@ logs/
 page_source_logs/
 test_artifacts/
 telephone_operator.log
+.env
+*.env
+.env

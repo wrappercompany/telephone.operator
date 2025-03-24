@@ -1,0 +1,8 @@
+openai-agents
+pytest
+pytest-asyncio
+pytest-xdist
+appium-python-client>=3.1.1
+rich>=13.0.0,<14.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0 

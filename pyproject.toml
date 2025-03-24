@@ -1,0 +1,19 @@
+[project]
+name = "telephone-operator"
+version = "0.1.0"
+description = "Automated iOS app testing and screenshot capture tool"
+authors = []
+dependencies = [
+    "openai-agents",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-xdist",
+    "appium-python-client>=3.1.1",
+    "rich>=13.0.0,<14.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build" 
