@@ -15,7 +15,7 @@
 import asyncio
 import os
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
 from agents import Agent, Runner, function_tool
@@ -26,6 +26,8 @@ from appium.webdriver.appium_service import AppiumService
 from rich.console import Console
 from rich.panel import Panel
 from rich.traceback import install
+from rich.table import Table
+from rich.live import Live
 from dotenv import load_dotenv
 
 # Install rich traceback handler
@@ -85,6 +87,59 @@ class IOSDriver:
 
 # Create global driver instance
 ios_driver = IOSDriver()
+
+class ToolCallLogger:
+    def __init__(self):
+        self.tool_calls = []
+        self.console = Console()
+        self.live = None
+        
+    def log_tool_call(self, tool_name: str, args: Dict[str, Any]):
+        self.tool_calls.append({
+            "tool": tool_name,
+            "args": args,
+            "timestamp": datetime.now()
+        })
+        self._display_tool_calls()
+    
+    def _display_tool_calls(self):
+        table = Table(title="Tool Calls History")
+        table.add_column("Time", style="cyan")
+        table.add_column("Tool", style="green")
+        table.add_column("Arguments", style="yellow")
+        
+        for call in self.tool_calls:
+            time_str = call["timestamp"].strftime("%H:%M:%S")
+            args_str = ", ".join(f"{k}={v}" for k, v in call["args"].items())
+            table.add_row(time_str, call["tool"], args_str)
+        
+        if self.live:
+            self.live.update(table)
+        else:
+            self.console.print(table)
+
+    def start_live_display(self):
+        self.live = Live(auto_refresh=False)
+        self.live.start()
+
+    def stop_live_display(self):
+        if self.live:
+            self.live.stop()
+            self.live = None
+
+# Create global instances
+tool_logger = ToolCallLogger()
+
+# Wrap each tool function to add logging
+def wrap_tool_with_logging(tool):
+    original_on_invoke = tool.on_invoke_tool
+    
+    async def logged_invoke(*args, **kwargs):
+        tool_logger.log_tool_call(tool.name, kwargs)
+        return await original_on_invoke(*args, **kwargs)
+    
+    tool.on_invoke_tool = logged_invoke
+    return tool
 
 @function_tool
 async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Optional[bool] = None) -> str:
@@ -290,6 +345,9 @@ ios_agent = Agent(
     ],
 )
 
+# Wrap all tools with logging after agent creation
+ios_agent.tools = [wrap_tool_with_logging(tool) for tool in ios_agent.tools]
+
 async def main():
     # Load environment variables from .env file
     load_dotenv()
@@ -303,6 +361,7 @@ async def main():
     
     try:
         with console.status("[bold blue]Running iOS automation...[/bold blue]"):
+            tool_logger.start_live_display()
             # Test the agent with a simple query
             result = await Runner.run(
                 ios_agent, 
@@ -312,6 +371,7 @@ async def main():
             console.print(Panel(result.final_output, border_style="green"))
     finally:
         # Clean up resources
+        tool_logger.stop_live_display()
         await ios_driver.cleanup()
         console.print("[yellow]Cleanup completed[/yellow]")
 
