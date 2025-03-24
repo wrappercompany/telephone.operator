@@ -19,10 +19,11 @@ import requests
 import subprocess
 import time
 from enum import Enum
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Literal
 from datetime import datetime
 from pathlib import Path
-from agents import Agent, Runner, function_tool
+from dataclasses import dataclass
+from agents import Agent, Runner, function_tool, ItemHelpers, TResponseInputItem, trace
 from appium import webdriver
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.common.appiumby import AppiumBy
@@ -329,6 +330,72 @@ async def take_screenshot() -> str:
     except Exception as e:
         return f"Failed to take screenshot: {str(e)}"
 
+@dataclass
+class CoverageEvaluation:
+    feedback: str
+    score: Literal["complete", "needs_more", "insufficient"]
+    missing_areas: list[str]
+
+screenshot_taker = Agent(
+    name="screenshot_taker",
+    instructions=f"""You are a specialized iOS screenshot capture assistant. Your mission is to systematically capture screenshots of every screen, state, and interaction in the app to create a comprehensive visual reference library.
+
+Key Responsibilities:
+1. Complete Coverage
+   - Start from app launch and methodically explore EVERY screen
+   - Screenshot ALL unique screens and states
+   - Continue until ALL main aspects of the app are captured
+
+2. Required Screenshots
+   - Main Screens: Every unique screen in the app
+   - States: Default, active, empty, loading, error states
+   - Flows: Each step in multi-step processes
+   - Modals: Popups, alerts, overlays
+   - System UI: Permission prompts, system dialogs
+
+3. Screenshot Quality
+   - Well-framed and complete
+   - Free of temporary elements
+   - Captured after animations complete
+   - In correct device orientation
+
+Remember: Be thorough and systematic in your exploration. After each set of actions, describe what you've captured and what you plan to explore next.""",
+    tools=[
+        get_page_source,
+        tap_element,
+        press_physical_button,
+        swipe,
+        send_input,
+        navigate_to,
+        launch_app,
+        take_screenshot
+    ]
+)
+
+coverage_evaluator = Agent[None](
+    name="coverage_evaluator",
+    instructions="""You are an expert iOS app coverage evaluator. Your job is to analyze the current screenshot coverage and provide specific, actionable feedback.
+
+When evaluating, consider:
+1. Have ALL main screens been captured?
+2. Are there missing states (empty, loading, error)?
+3. Are there uncaptured modals or system prompts?
+4. Are all key user flows represented?
+
+Evaluation Rules:
+1. Never mark as complete on the first evaluation
+2. Provide specific, actionable feedback about missing areas
+3. Consider both breadth (all screens) and depth (all states)
+4. Track progress across evaluations
+5. Only mark as complete when you have strong evidence of thorough coverage
+
+Your feedback should be:
+1. Specific - Name exact screens or states missing
+2. Actionable - Give clear next steps
+3. Prioritized - Focus on most important missing areas first""",
+    output_type=CoverageEvaluation
+)
+
 async def main():
     # Load environment variables from .env file
     load_dotenv()
@@ -353,77 +420,84 @@ async def main():
         console.print(f"[green]{status_message}[/green]")
     
     try:
-        with console.status("[bold blue]Running iOS automation...[/bold blue]"):
-            tool_logger.start_live_display()
-            
-            # Create agent with target app configuration
-            target_app = {
-                "name": "Messages",  # Human readable name
-                "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
-            }
-            
-            instructions = f"""You are a specialized iOS testing assistant that documents apps with the same meticulous attention to detail as Mobbin's UX Labellers. Your goal is to create high-quality, systematic documentation of UI patterns and flows for {target_app['name']} that can serve as valuable references for designers and product teams.
+        # Create agent with target app configuration
+        target_app = {
+            "name": "Messages",  # Human readable name
+            "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
+        }
 
-    Key Behaviors:
-    1. Pattern Recognition & Documentation
-       - Identify and document specific UI patterns and elements
-       - Pay special attention to innovative or unique design solutions
-       - Document both common patterns and edge cases
-       - Capture the full context of each UI component
-    
-    2. Systematic Flow Documentation
-       - Document complete user flows from start to finish
-       - Capture all states within each flow (empty, loading, error, success)
-       - Focus on transitions and micro-interactions
-       - Document modal states, overlays, and tooltips
-    
-    3. Quality Standards
-       - Take clear, properly framed screenshots
-       - Ensure consistent device orientation
-       - Capture each meaningful state change
-       - Allow animations to complete before capturing
-       - Document patterns at various states (default, pressed, focused)
-    
-    4. Natural Interaction
-       - Navigate apps like a real user would
-       - Use natural gesture patterns and timing
-       - Allow appropriate time between interactions
-       - Test both primary and secondary interaction paths
-    
-    5. Technical Requirements
-       - Device: iPhone 16 Pro
-       - OS Version: iOS 18.2
-       - Target App: {target_app['name']} ({target_app['bundle_id']})
-       - Maintain consistent testing conditions
-       - Ensure proper app initialization before documentation
-    
-    Remember: Your goal is to create a comprehensive, high-quality reference library of UI patterns and flows for {target_app['name']}. Each screenshot should be purposeful and provide clear value for designers and product teams studying these interfaces."""
+        input_items: list[TResponseInputItem] = [{
+            "content": f"Please launch {target_app['name']} and start capturing screenshots systematically.",
+            "role": "user"
+        }]
 
-            ios_agent = Agent(
-                name="iOS Testing Assistant",
-                instructions=instructions,
-                tools=[
-                    get_page_source,
-                    tap_element,
-                    press_physical_button,
-                    swipe,
-                    send_input,
-                    navigate_to,
-                    launch_app,
-                    take_screenshot
-                ],
-            )
+        latest_screenshots: list[str] = []
+        iteration_count = 0
+        max_iterations = 20  # Increased from 10 to 20
+        
+        # Start tool logging
+        tool_logger.start_live_display()
 
-            # Wrap all tools with logging after agent creation
-            ios_agent.tools = [wrap_tool_with_logging(tool) for tool in ios_agent.tools]
+        # Main workflow trace
+        with trace("Screenshot Coverage Evaluation"):
+            while iteration_count < max_iterations:
+                iteration_count += 1
+                
+                # Clear screen for new iteration
+                console.clear()
+                
+                # Show iteration progress
+                console.print(f"\nIteration {iteration_count}/{max_iterations}")
+                
+                # Run screenshot taker
+                console.print("\nScreenshot Taker: Capturing screenshots...")
+                screenshot_result = await Runner.run(
+                    screenshot_taker,
+                    input_items,
+                    max_turns=30  # Increased max turns for screenshot taker
+                )
 
-            # Test the agent with the target app
-            result = await Runner.run(
-                ios_agent, 
-                input=f"Can you launch {target_app['name']} and document its main interface?"
-            )
-            console.print("\n[bold]Agent Response:[/bold]")
-            console.print(Panel(result.final_output, border_style="green"))
+                input_items = screenshot_result.to_input_list()
+                latest_action = ItemHelpers.text_message_outputs(screenshot_result.new_items)
+                
+                # Show screenshot results
+                console.print("\nScreenshot Results:")
+                console.print(Panel(latest_action, border_style="blue"))
+
+                # Run coverage evaluator
+                console.print("\nEvaluator: Analyzing coverage...")
+                evaluator_result = await Runner.run(
+                    coverage_evaluator,
+                    input_items,
+                    max_turns=20  # Increased max turns for evaluator
+                )
+                result: CoverageEvaluation = evaluator_result.final_output
+
+                # Show evaluation results
+                console.print("\nCoverage Analysis:")
+                console.print(Panel(
+                    f"Score: {result.score}\n\nFeedback:\n{result.feedback}\n\nMissing Areas:\n" + "\n".join([f"- {area}" for area in result.missing_areas]),
+                    border_style="yellow",
+                    title="Coverage Analysis"
+                ))
+
+                if result.score == "complete":
+                    console.print("\nScreenshot coverage is complete.")
+                    break
+
+                if iteration_count == max_iterations:
+                    console.print("\nMaximum iterations reached. Please review coverage and run again if needed.")
+                    break
+
+                # Add feedback for next iteration
+                input_items.append({
+                    "content": f"Coverage Feedback: {result.feedback}\nPlease capture screenshots of: {', '.join(result.missing_areas)}",
+                    "role": "user"
+                })
+                
+                # Brief pause to show results
+                await asyncio.sleep(2)
+
     finally:
         # Clean up resources
         tool_logger.stop_live_display()
