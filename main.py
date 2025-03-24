@@ -28,20 +28,16 @@ from appium import webdriver
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.common.appiumby import AppiumBy
 from appium.webdriver.appium_service import AppiumService
-from rich.console import Console
-from rich.panel import Panel
-from rich.traceback import install
-from rich.table import Table
-from rich.live import Live
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import openai
-
-# Install rich traceback handler
-install(show_locals=True)
-
-# Create rich console instance
-console = Console()
+from ui import (
+    console, tool_logger, CoverageEvaluation,
+    print_iteration_progress, print_screenshot_results,
+    print_coverage_analysis, print_error, print_warning,
+    print_success, print_appium_status,
+    print_missing_api_key_instructions, Panel
+)
 
 class LocatorStrategy(str, Enum):
     ACCESSIBILITY_ID = "accessibility_id"
@@ -136,12 +132,12 @@ def reset_environment():
                     item.rmdir()
             test_artifacts.rmdir()
         except Exception as e:
-            console.print(f"[yellow]Warning: Could not fully clean test_artifacts: {e}[/yellow]")
+            print_warning(f"Warning: Could not fully clean test_artifacts: {e}")
             
     # Create fresh test_artifacts directory
     test_artifacts.mkdir(exist_ok=True)
     
-    console.print("[green]Environment reset complete[/green]")
+    print_success("Environment reset complete")
 
 # Reset environment at startup
 reset_environment()
@@ -156,7 +152,7 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
         format_output: If True, formats the XML for better readability
     """
     if not ios_driver.driver:
-        console.print("[red]No active Appium session[/red]")
+        print_error("No active Appium session")
         return "No active Appium session"
     
     try:
@@ -166,7 +162,7 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
         return page_source
     except Exception as e:
         error_msg = f"Failed to get page source: {str(e)}"
-        console.print(f"[red]{error_msg}[/red]")
+        print_error(error_msg)
         return error_msg
 
 @function_tool
@@ -180,7 +176,7 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         by: The locator strategy to use
     """
     if not ios_driver.driver:
-        console.print("[red]No active Appium session[/red]")
+        print_error("No active Appium session")
         return "No active Appium session"
     
     try:
@@ -197,16 +193,16 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         # Check if element is visible
         if not element.is_displayed():
             error_msg = f"Element with {by_strategy}: {element_id} is not visible"
-            console.print(f"[yellow]{error_msg}[/yellow]")
+            print_warning(error_msg)
             return error_msg
             
         element.click()
         success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
-        console.print(f"[green]{success_msg}[/green]")
+        print_success(success_msg)
         return success_msg
     except Exception as e:
         error_msg = f"Failed to tap element: {str(e)}"
-        console.print(f"[red]{error_msg}[/red]")
+        print_error(error_msg)
         return error_msg
 
 @function_tool
@@ -364,12 +360,6 @@ async def take_screenshot() -> str:
     except Exception as e:
         return f"Failed to capture artifacts: {str(e)}"
 
-@dataclass
-class CoverageEvaluation:
-    feedback: str
-    score: Literal["complete", "needs_more", "insufficient"]
-    missing_areas: list[str]
-
 class AppState(BaseModel):
     current_app: str
     bundle_id: str
@@ -461,27 +451,6 @@ Your feedback should be:
     output_type=CoverageEvaluation
 )
 
-class ToolCallLogger:
-    def __init__(self):
-        self.console = Console()
-        
-    def log_tool_call(self, tool_name: str, args: Dict[str, Any]):
-        # Filter out None values from args
-        args_str = ", ".join(f"{k}={v}" for k, v in args.items() if v is not None)
-        self.console.print(f"[cyan]Using tool:[/cyan] [green]{tool_name}[/green] [yellow]{args_str}[/yellow]")
-    
-    def start_live_display(self):
-        pass  # No-op, not needed anymore
-    
-    def stop_live_display(self):
-        pass  # No-op, not needed anymore
-    
-    def clear_history(self):
-        pass  # No-op, not needed anymore
-
-# Create global tool logger instance
-tool_logger = ToolCallLogger()
-
 async def main():
     # Reset the environment at the start
     reset_environment()
@@ -491,23 +460,20 @@ async def main():
     
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
-        error_msg = "Error: OPENAI_API_KEY not found in environment variables or .env file"
-        console.print(f"[red]{error_msg}[/red]")
-        console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
-        console.print("OPENAI_API_KEY=your_api_key_here")
+        print_missing_api_key_instructions()
         return
 
     # Check and start Appium server if needed
     server_running, status_message = check_appium_server()
     if not server_running:
-        console.print("[yellow]Appium server is not running. Attempting to start it...[/yellow]")
+        print_warning("Appium server is not running. Attempting to start it...")
         server_started, start_message = start_appium_server()
         if not server_started:
-            console.print(f"[red]Error: {start_message}[/red]")
+            print_appium_status(start_message, is_error=True)
             return
-        console.print(f"[green]{start_message}[/green]")
+        print_appium_status(start_message)
     else:
-        console.print(f"[green]{status_message}[/green]")
+        print_appium_status(status_message)
     
     try:
         # Create fresh instances of agents to ensure clean state
@@ -541,7 +507,6 @@ async def main():
         max_iterations = 20
         
         # Start tool logging with fresh state
-        tool_logger = ToolCallLogger()
         tool_logger.start_live_display()
 
         # Create run config with tracing disabled
@@ -553,18 +518,14 @@ async def main():
         while iteration_count < max_iterations:
             iteration_count += 1
             
-            # Clear screen for new iteration
-            console.clear()
-            
-            # Show iteration progress
-            console.print(f"\n[bold cyan]Iteration {iteration_count}/{max_iterations}[/bold cyan]")
+            print_iteration_progress(iteration_count, max_iterations)
             
             try:
                 # Clear previous tool calls for this iteration
                 tool_logger.clear_history()
                 
                 # Run screenshot taker with error handling and disabled tracing
-                console.print("\n[bold green]Screenshot Taker:[/bold green] Capturing screenshots...")
+                print_success("\nScreenshot Taker: Capturing screenshots...")
                 screenshot_result = await Runner.run(
                     screenshot_taker_instance,
                     input_items,
@@ -575,12 +536,10 @@ async def main():
                 input_items = screenshot_result.to_input_list()
                 latest_action = ItemHelpers.text_message_outputs(screenshot_result.new_items)
                 
-                # Show screenshot results
-                console.print("\n[bold green]Screenshot Results:[/bold green]")
-                console.print(Panel(latest_action, border_style="blue"))
+                print_screenshot_results(latest_action)
 
                 # Run coverage evaluator with disabled tracing
-                console.print("\n[bold green]Evaluator:[/bold green] Analyzing coverage...")
+                print_success("\nEvaluator: Analyzing coverage...")
                 evaluator_result = await Runner.run(
                     coverage_evaluator_instance,
                     input_items,
@@ -589,20 +548,14 @@ async def main():
                 )
                 result: CoverageEvaluation = evaluator_result.final_output
 
-                # Show evaluation results
-                console.print("\n[bold green]Coverage Analysis:[/bold green]")
-                console.print(Panel(
-                    f"Score: {result.score}\n\nFeedback:\n{result.feedback}\n\nMissing Areas:\n" + "\n".join([f"- {area}" for area in result.missing_areas]),
-                    border_style="yellow",
-                    title="Coverage Analysis"
-                ))
+                print_coverage_analysis(result)
 
                 if result.score == "complete":
-                    console.print("\n[bold green]Screenshot coverage is complete.[/bold green]")
+                    print_success("\nScreenshot coverage is complete.")
                     break
 
                 if iteration_count == max_iterations:
-                    console.print("\n[bold yellow]Maximum iterations reached. Please review coverage and run again if needed.[/bold yellow]")
+                    print_warning("\nMaximum iterations reached. Please review coverage and run again if needed.")
                     break
 
                 # Add feedback for next iteration
@@ -615,7 +568,7 @@ async def main():
                 await asyncio.sleep(2)
 
             except Exception as e:
-                console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
+                print_error(f"\nError: {str(e)}")
                 break
 
     except Exception as e:
@@ -624,7 +577,7 @@ async def main():
         # Clean up resources
         tool_logger.stop_live_display()
         await ios_driver.cleanup()
-        console.print("[yellow]Cleanup completed[/yellow]")
+        print_warning("Cleanup completed")
 
 def start_appium_server() -> Tuple[bool, str]:
     """Start the Appium server if it's not running."""
@@ -634,7 +587,7 @@ def start_appium_server() -> Tuple[bool, str]:
             return True, "Appium server is already running"
         
         # Start Appium server in the background
-        console.print("[yellow]Starting Appium server...[/yellow]")
+        print_warning("Starting Appium server...")
         subprocess.Popen(
             ["appium", "--address", "127.0.0.1", "--port", "4723"],
             stdout=subprocess.DEVNULL,
