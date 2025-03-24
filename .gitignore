@@ -3,3 +3,4 @@ logs/
 .pytest_cache/
 page_source_logs/
 test_artifacts/
+telephone_operator.log

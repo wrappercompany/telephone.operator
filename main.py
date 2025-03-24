@@ -18,6 +18,7 @@ import os
 import requests
 import subprocess
 import time
+import logging
 from enum import Enum
 from typing import Optional, Dict, Any, Tuple, Literal
 from datetime import datetime
@@ -37,6 +38,18 @@ from dotenv import load_dotenv
 
 # Install rich traceback handler
 install(show_locals=True)
+
+# Configure logging
+log_file = "telephone_operator.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, mode='w'),  # 'w' mode overwrites the file on each run
+        logging.StreamHandler()  # Also print to console
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Create rich console instance
 console = Console()
@@ -433,7 +446,9 @@ async def main():
     
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
-        console.print("[red]Error: OPENAI_API_KEY not found in environment variables or .env file[/red]")
+        error_msg = "Error: OPENAI_API_KEY not found in environment variables or .env file"
+        logger.error(error_msg)
+        console.print(f"[red]{error_msg}[/red]")
         console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
         console.print("OPENAI_API_KEY=your_api_key_here")
         return
@@ -441,13 +456,17 @@ async def main():
     # Check and start Appium server if needed
     server_running, status_message = check_appium_server()
     if not server_running:
+        logger.warning("Appium server is not running. Attempting to start it...")
         console.print("[yellow]Appium server is not running. Attempting to start it...[/yellow]")
         server_started, start_message = start_appium_server()
         if not server_started:
+            logger.error(f"Failed to start Appium server: {start_message}")
             console.print(f"[red]Error: {start_message}[/red]")
             return
+        logger.info(f"Appium server started: {start_message}")
         console.print(f"[green]{start_message}[/green]")
     else:
+        logger.info(f"Appium server status: {status_message}")
         console.print(f"[green]{status_message}[/green]")
     
     try:
@@ -456,6 +475,7 @@ async def main():
             "name": "Messages",  # Human readable name
             "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
         }
+        logger.info(f"Starting test session for app: {target_app['name']} ({target_app['bundle_id']})")
 
         input_items: list[TResponseInputItem] = [{
             "content": f"Please launch {target_app['name']} and start capturing screenshots systematically.",
@@ -468,11 +488,13 @@ async def main():
         
         # Start tool logging
         tool_logger.start_live_display()
+        logger.info("Started tool logging display")
 
         # Main workflow trace
         with trace("Screenshot Coverage Evaluation"):
             while iteration_count < max_iterations:
                 iteration_count += 1
+                logger.info(f"Starting iteration {iteration_count}/{max_iterations}")
                 
                 # Clear screen for new iteration
                 console.clear()
@@ -482,6 +504,7 @@ async def main():
                 
                 # Run screenshot taker
                 console.print("\nScreenshot Taker: Capturing screenshots...")
+                logger.info("Running screenshot capture sequence")
                 screenshot_result = await Runner.run(
                     screenshot_taker,
                     input_items,
@@ -490,6 +513,7 @@ async def main():
 
                 input_items = screenshot_result.to_input_list()
                 latest_action = ItemHelpers.text_message_outputs(screenshot_result.new_items)
+                logger.info(f"Screenshot action completed: {latest_action[:200]}...")  # Log first 200 chars
                 
                 # Show screenshot results
                 console.print("\nScreenshot Results:")
@@ -497,12 +521,14 @@ async def main():
 
                 # Run coverage evaluator
                 console.print("\nEvaluator: Analyzing coverage...")
+                logger.info("Running coverage evaluation")
                 evaluator_result = await Runner.run(
                     coverage_evaluator,
                     input_items,
                     max_turns=20  # Increased max turns for evaluator
                 )
                 result: CoverageEvaluation = evaluator_result.final_output
+                logger.info(f"Coverage evaluation completed - Score: {result.score}")
 
                 # Show evaluation results
                 console.print("\nCoverage Analysis:")
@@ -513,10 +539,12 @@ async def main():
                 ))
 
                 if result.score == "complete":
+                    logger.info("Screenshot coverage is complete")
                     console.print("\nScreenshot coverage is complete.")
                     break
 
                 if iteration_count == max_iterations:
+                    logger.warning("Maximum iterations reached without complete coverage")
                     console.print("\nMaximum iterations reached. Please review coverage and run again if needed.")
                     break
 
@@ -525,14 +553,19 @@ async def main():
                     "content": f"Coverage Feedback: {result.feedback}\nPlease capture screenshots of: {', '.join(result.missing_areas)}",
                     "role": "user"
                 })
+                logger.info(f"Added feedback for next iteration. Missing areas: {', '.join(result.missing_areas)}")
                 
                 # Brief pause to show results
                 await asyncio.sleep(2)
 
+    except Exception as e:
+        logger.error(f"An error occurred during execution: {str(e)}", exc_info=True)
+        raise
     finally:
         # Clean up resources
         tool_logger.stop_live_display()
         await ios_driver.cleanup()
+        logger.info("Cleanup completed")
         console.print("[yellow]Cleanup completed[/yellow]")
 
 def start_appium_server() -> Tuple[bool, str]:
