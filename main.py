@@ -329,28 +329,106 @@ async def take_screenshot() -> str:
     except Exception as e:
         return f"Failed to take screenshot: {str(e)}"
 
-# Create the iOS testing agent with all available tools
-ios_agent = Agent(
-    name="iOS Testing Assistant",
-    instructions="""You are a specialized iOS testing assistant that can help automate iOS app testing.
-    You understand iOS automation and can help with device setup, navigation, and testing.
-    You are configured to work with an iPhone 16 Pro running iOS 18.2.
-    You can perform various actions like tapping elements, pressing buttons, swiping, and more.
-    Before performing any actions, make sure to launch the appropriate app first.""",
-    tools=[
-        get_page_source,
-        tap_element,
-        press_physical_button,
-        swipe,
-        send_input,
-        navigate_to,
-        launch_app,
-        take_screenshot
-    ],
-)
+async def main():
+    # Load environment variables from .env file
+    load_dotenv()
+    
+    # Check for OpenAI API key
+    if not os.getenv("OPENAI_API_KEY"):
+        console.print("[red]Error: OPENAI_API_KEY not found in environment variables or .env file[/red]")
+        console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
+        console.print("OPENAI_API_KEY=your_api_key_here")
+        return
 
-# Wrap all tools with logging after agent creation
-ios_agent.tools = [wrap_tool_with_logging(tool) for tool in ios_agent.tools]
+    # Check and start Appium server if needed
+    server_running, status_message = check_appium_server()
+    if not server_running:
+        console.print("[yellow]Appium server is not running. Attempting to start it...[/yellow]")
+        server_started, start_message = start_appium_server()
+        if not server_started:
+            console.print(f"[red]Error: {start_message}[/red]")
+            return
+        console.print(f"[green]{start_message}[/green]")
+    else:
+        console.print(f"[green]{status_message}[/green]")
+    
+    try:
+        with console.status("[bold blue]Running iOS automation...[/bold blue]"):
+            tool_logger.start_live_display()
+            
+            # Create agent with target app configuration
+            target_app = {
+                "name": "Messages",  # Human readable name
+                "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
+            }
+            
+            instructions = f"""You are a specialized iOS testing assistant that documents apps with the same meticulous attention to detail as Mobbin's UX Labellers. Your goal is to create high-quality, systematic documentation of UI patterns and flows for {target_app['name']} that can serve as valuable references for designers and product teams.
+
+    Key Behaviors:
+    1. Pattern Recognition & Documentation
+       - Identify and document specific UI patterns and elements
+       - Pay special attention to innovative or unique design solutions
+       - Document both common patterns and edge cases
+       - Capture the full context of each UI component
+    
+    2. Systematic Flow Documentation
+       - Document complete user flows from start to finish
+       - Capture all states within each flow (empty, loading, error, success)
+       - Focus on transitions and micro-interactions
+       - Document modal states, overlays, and tooltips
+    
+    3. Quality Standards
+       - Take clear, properly framed screenshots
+       - Ensure consistent device orientation
+       - Capture each meaningful state change
+       - Allow animations to complete before capturing
+       - Document patterns at various states (default, pressed, focused)
+    
+    4. Natural Interaction
+       - Navigate apps like a real user would
+       - Use natural gesture patterns and timing
+       - Allow appropriate time between interactions
+       - Test both primary and secondary interaction paths
+    
+    5. Technical Requirements
+       - Device: iPhone 16 Pro
+       - OS Version: iOS 18.2
+       - Target App: {target_app['name']} ({target_app['bundle_id']})
+       - Maintain consistent testing conditions
+       - Ensure proper app initialization before documentation
+    
+    Remember: Your goal is to create a comprehensive, high-quality reference library of UI patterns and flows for {target_app['name']}. Each screenshot should be purposeful and provide clear value for designers and product teams studying these interfaces."""
+
+            ios_agent = Agent(
+                name="iOS Testing Assistant",
+                instructions=instructions,
+                tools=[
+                    get_page_source,
+                    tap_element,
+                    press_physical_button,
+                    swipe,
+                    send_input,
+                    navigate_to,
+                    launch_app,
+                    take_screenshot
+                ],
+            )
+
+            # Wrap all tools with logging after agent creation
+            ios_agent.tools = [wrap_tool_with_logging(tool) for tool in ios_agent.tools]
+
+            # Test the agent with the target app
+            result = await Runner.run(
+                ios_agent, 
+                input=f"Can you launch {target_app['name']} and document its main interface?"
+            )
+            console.print("\n[bold]Agent Response:[/bold]")
+            console.print(Panel(result.final_output, border_style="green"))
+    finally:
+        # Clean up resources
+        tool_logger.stop_live_display()
+        await ios_driver.cleanup()
+        console.print("[yellow]Cleanup completed[/yellow]")
 
 def start_appium_server() -> Tuple[bool, str]:
     """Start the Appium server if it's not running."""
@@ -392,45 +470,6 @@ def check_appium_server() -> Tuple[bool, str]:
         return False, "Appium server connection timed out"
     except Exception as e:
         return False, f"Error checking Appium server: {str(e)}"
-
-async def main():
-    # Load environment variables from .env file
-    load_dotenv()
-    
-    # Check for OpenAI API key
-    if not os.getenv("OPENAI_API_KEY"):
-        console.print("[red]Error: OPENAI_API_KEY not found in environment variables or .env file[/red]")
-        console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
-        console.print("OPENAI_API_KEY=your_api_key_here")
-        return
-
-    # Check and start Appium server if needed
-    server_running, status_message = check_appium_server()
-    if not server_running:
-        console.print("[yellow]Appium server is not running. Attempting to start it...[/yellow]")
-        server_started, start_message = start_appium_server()
-        if not server_started:
-            console.print(f"[red]Error: {start_message}[/red]")
-            return
-        console.print(f"[green]{start_message}[/green]")
-    else:
-        console.print(f"[green]{status_message}[/green]")
-    
-    try:
-        with console.status("[bold blue]Running iOS automation...[/bold blue]"):
-            tool_logger.start_live_display()
-            # Test the agent with a simple query
-            result = await Runner.run(
-                ios_agent, 
-                input="Can you launch Safari and navigate to openai.com?"
-            )
-            console.print("\n[bold]Agent Response:[/bold]")
-            console.print(Panel(result.final_output, border_style="green"))
-    finally:
-        # Clean up resources
-        tool_logger.stop_live_display()
-        await ios_driver.cleanup()
-        console.print("[yellow]Cleanup completed[/yellow]")
 
 if __name__ == "__main__":
     asyncio.run(main()) 
