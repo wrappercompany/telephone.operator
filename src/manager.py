@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from agents import Runner, custom_span, gen_trace_id, trace, RunConfig
 from rich.console import Console
+from agents.items import ItemHelpers
 import openai
 
 from .agents.screenshot_agent import screenshot_taker
@@ -73,12 +74,12 @@ class ScreenshotManager:
                 )
 
                 try:
-                    # Run screenshot capture
-                    screenshot_result = await self._capture_screenshots(input_items, run_config)
+                    # Run screenshot capture with streaming
+                    screenshot_result = await self._capture_screenshots_streamed(input_items, run_config)
                     input_items = screenshot_result.to_input_list()
 
-                    # Run coverage evaluation
-                    coverage_result = await self._evaluate_coverage(input_items, run_config)
+                    # Run coverage evaluation with streaming
+                    coverage_result = await self._evaluate_coverage_streamed(input_items, run_config)
                     
                     # Get the CoverageEvaluation object directly
                     coverage_eval = coverage_result.final_output_as(CoverageEvaluation)
@@ -115,26 +116,72 @@ class ScreenshotManager:
 
             self.printer.end()
 
-    async def _capture_screenshots(self, input_items: list, run_config: RunConfig):
+    async def _capture_screenshots_streamed(self, input_items: list, run_config: RunConfig):
         with custom_span("Capture Screenshots"):
             self.printer.update_item("capturing", "Capturing screenshots...")
-            result = await Runner.run(
+            result = Runner.run_streamed(
                 screenshot_taker,
                 input_items,
                 run_config=run_config,
                 max_turns=30
             )
+            
+            async for event in result.stream_events():
+                if event.type == "run_item_stream_event":
+                    if event.item.type == "tool_call_item":
+                        tool_info = event.item.raw_item
+                        self.printer.update_item(
+                            "tool_call",
+                            f"Tool call: {tool_info.name}",
+                            hide_checkmark=True
+                        )
+                    elif event.item.type == "tool_call_output_item":
+                        self.printer.update_item(
+                            "tool_output",
+                            f"Output: {event.item.output}",
+                            hide_checkmark=True
+                        )
+                    elif event.item.type == "message_output_item":
+                        self.printer.update_item(
+                            "agent_message",
+                            f"Agent: {ItemHelpers.text_message_output(event.item)}",
+                            hide_checkmark=True
+                        )
+            
             self.printer.mark_item_done("capturing")
-            return result
+            return result.final_result
 
-    async def _evaluate_coverage(self, input_items: list, run_config: RunConfig):
+    async def _evaluate_coverage_streamed(self, input_items: list, run_config: RunConfig):
         with custom_span("Evaluate Coverage"):
             self.printer.update_item("evaluating", "Evaluating coverage...")
-            result = await Runner.run(
+            result = Runner.run_streamed(
                 coverage_evaluator,
                 input_items,
                 run_config=run_config,
                 max_turns=20
             )
+            
+            async for event in result.stream_events():
+                if event.type == "run_item_stream_event":
+                    if event.item.type == "tool_call_item":
+                        tool_info = event.item.raw_item
+                        self.printer.update_item(
+                            "tool_call",
+                            f"Tool call: {tool_info.name}",
+                            hide_checkmark=True
+                        )
+                    elif event.item.type == "tool_call_output_item":
+                        self.printer.update_item(
+                            "tool_output",
+                            f"Output: {event.item.output}",
+                            hide_checkmark=True
+                        )
+                    elif event.item.type == "message_output_item":
+                        self.printer.update_item(
+                            "agent_message",
+                            f"Agent: {ItemHelpers.text_message_output(event.item)}",
+                            hide_checkmark=True
+                        )
+            
             self.printer.mark_item_done("evaluating")
-            return result 
+            return result.final_result 

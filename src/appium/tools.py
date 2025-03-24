@@ -196,7 +196,7 @@ async def launch_app(bundle_id: str) -> str:
             ios_driver.driver.activate_app(bundle_id)
             return f"Successfully launched app with bundle ID: {bundle_id}"
         
-        await ios_driver.initialize(bundle_id)
+        ios_driver.init_driver(bundle_id)
         return f"Successfully launched app with bundle ID: {bundle_id}"
     except Exception as e:
         return f"Failed to launch app: {str(e)}"
