@@ -8,6 +8,7 @@
 #   "pytest-xdist",
 #   "appium-python-client>=3.1.1",
 #   "rich>=13.0.0,<14.0.0",
+#   "python-dotenv>=1.0.0",
 # ]
 # ///
 
@@ -25,6 +26,7 @@ from appium.webdriver.appium_service import AppiumService
 from rich.console import Console
 from rich.panel import Panel
 from rich.traceback import install
+from dotenv import load_dotenv
 
 # Install rich traceback handler
 install(show_locals=True)
@@ -289,9 +291,14 @@ ios_agent = Agent(
 )
 
 async def main():
-    # Make sure to set your OpenAI API key
+    # Load environment variables from .env file
+    load_dotenv()
+    
+    # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
-        console.print("[red]Please set your OPENAI_API_KEY environment variable[/red]")
+        console.print("[red]Error: OPENAI_API_KEY not found in environment variables or .env file[/red]")
+        console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
+        console.print("OPENAI_API_KEY=your_api_key_here")
         return
     
     try:
