@@ -1,6 +1,6 @@
 from pydantic import BaseModel
-from agents import AgentHooks
-from .driver import IOSDriver
+from typing import Optional
+from .driver import ios_driver
 
 class AppState(BaseModel):
     """State of the current app being tested."""
@@ -11,21 +11,28 @@ class AppState(BaseModel):
     coverage_score: float = 0.0
 
 class AppiumContext:
-    """Context for managing Appium session state."""
-    def __init__(self, driver: IOSDriver):
-        self.driver = driver
-        self.state = AppState()
+    """Manages the Appium session state."""
+    def __init__(self):
+        self.driver = ios_driver
+        self.state: Optional[AppState] = None
 
-    async def update_state(self, **kwargs):
+    def update_state(self, **kwargs):
         """Update the current app state."""
+        if not self.state:
+            self.state = AppState()
         self.state = self.state.model_copy(update=kwargs)
 
-class AppiumHooks(AgentHooks):
-    """Hooks for managing Appium session lifecycle."""
-    async def before_run(self, context: AppiumContext):
-        """Initialize Appium session before agent run."""
-        await context.driver.initialize()
-    
-    async def after_run(self, context: AppiumContext):
-        """Clean up Appium session after agent run."""
-        await context.driver.cleanup() 
+class AppiumHooks:
+    """Handles Appium session lifecycle."""
+    def __init__(self, context: AppiumContext):
+        self.context = context
+
+    def pre_run(self):
+        """Initialize the Appium session."""
+        if not ios_driver.driver and self.context.state:
+            ios_driver.init_driver(self.context.state.bundle_id)
+
+    def post_run(self):
+        """Clean up the Appium session."""
+        if ios_driver.driver:
+            ios_driver.cleanup() 

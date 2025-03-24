@@ -1,9 +1,30 @@
-__pycache__
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# Test artifacts
+test_artifacts/
+
 logs/
 .pytest_cache/
 page_source_logs/
-test_artifacts/
 telephone_operator.log
-.env
 *.env
-.env

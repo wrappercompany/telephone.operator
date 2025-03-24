@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, ClassVar
 from rich.console import Console
 from rich.panel import Panel
 
@@ -7,6 +7,9 @@ console = Console()
 
 @dataclass
 class CoverageEvaluation:
+    """Evaluation of screenshot coverage."""
+    name: ClassVar[str] = "CoverageEvaluation"
+    
     score: str  # "complete" or "incomplete"
     feedback: str
     missing_areas: List[str]
@@ -49,12 +52,18 @@ def print_appium_status(message: str, is_error: bool = False):
     console.print(f"[bold {style}]Appium Status:[/bold {style}] {message}")
 
 def print_missing_api_key_instructions():
-    """Print instructions for setting up OpenAI API key."""
+    """Print instructions for setting up the OpenAI API key."""
     console.print(Panel(
-        "OpenAI API key not found. Please set your OPENAI_API_KEY environment variable:\n\n"
-        "1. Copy .env.example to .env\n"
-        "2. Add your API key to the .env file\n"
-        "3. Run the script again",
-        title="API Key Required",
+        """[red]Error: OpenAI API key not found![/red]
+
+To set up your OpenAI API key:
+
+1. Get your API key from [link]https://platform.openai.com/api-keys[/link]
+2. Create a .env file in the project root (copy from .env.example)
+3. Add your API key to the .env file:
+   [cyan]OPENAI_API_KEY=your_api_key_here[/cyan]
+
+Make sure to keep your API key secret and never commit it to version control.""",
+        title="API Key Setup Instructions",
         border_style="red"
     )) 
