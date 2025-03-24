@@ -1,8 +1,9 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 import os
 import logging
 from dotenv import load_dotenv
+from pydantic_core.core_schema import FieldValidationInfo
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ class AppiumConfig(BaseModel):
     platform_version: str = Field("18.2", description="Platform version")
     automation_name: str = Field("XCUITest", description="Automation framework")
     
-    @validator('port')
+    @field_validator('port')
     def port_must_be_valid(cls, v):
         if not (1024 <= v <= 65535):
             logger.warning(f"Invalid port number: {v}, using default 4723")
@@ -27,7 +28,7 @@ class AppConfig(BaseModel):
     name: str = Field(..., description="App name for display")
     bundle_id: str = Field(..., description="App bundle ID for launching")
     
-    @validator('bundle_id')
+    @field_validator('bundle_id')
     def bundle_id_must_be_valid(cls, v):
         if not v or not isinstance(v, str):
             logger.error("Bundle ID cannot be empty")
@@ -42,14 +43,15 @@ class Config(BaseModel):
     max_agent_turns: int = Field(30, description="Maximum turns per agent run")
     test_artifacts_dir: str = Field("test_artifacts", description="Directory for test artifacts")
     
-    @validator('max_iterations', 'max_agent_turns')
-    def positive_int(cls, v, values, field):
+    @field_validator('max_iterations', 'max_agent_turns')
+    def positive_int(cls, v, info: FieldValidationInfo):
+        field_name = info.field_name
         if v <= 0:
-            logger.warning(f"{field.name} must be positive, using default")
-            return 20 if field.name == 'max_iterations' else 30
+            logger.warning(f"{field_name} must be positive, using default")
+            return 20 if field_name == 'max_iterations' else 30
         return v
         
-    @validator('test_artifacts_dir')
+    @field_validator('test_artifacts_dir')
     def valid_directory(cls, v):
         if not v:
             logger.warning("Empty test_artifacts_dir, using default")
@@ -84,7 +86,7 @@ def load_config() -> Config:
             )
         )
         
-        logger.info(f"Configuration loaded successfully: {config.dict(exclude={'openai_api_key'})}")
+        logger.info(f"Configuration loaded successfully: {config.model_dump(exclude={'openai_api_key'})}")
         return config
     except Exception as e:
         logger.error(f"Error loading configuration: {str(e)}")

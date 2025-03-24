@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 class ScreenshotManager:
     def __init__(self):
         self.console = Console()
-        self.printer = Printer(self.console)
+        # Initialize printer with live display disabled to avoid Rich Table errors
+        self.printer = Printer(self.console, use_live_display=False)
         logger.info("Initializing ScreenshotManager")
         
         # Load environment variables
@@ -262,9 +263,15 @@ class ScreenshotManager:
                 logger.info("Screenshot capture completed")
                 
                 try:
-                    final_output = await result.final_output
-                    logger.info("Successfully got final output from screenshot agent")
-                    return final_output
+                    # Get the final output but handle the case where it might not be awaitable
+                    if asyncio.iscoroutine(result.final_output):
+                        final_output = await result.final_output
+                        logger.info("Successfully got final output from screenshot agent")
+                        return final_output
+                    else:
+                        # Handle case where result is already a value, not a coroutine
+                        logger.info("Screenshot result is not awaitable, using directly")
+                        return result.final_output
                 except Exception as e:
                     logger.error(f"Error getting final output from screenshot agent: {str(e)}")
                     logger.debug(f"Stack trace: {traceback.format_exc()}")
@@ -344,9 +351,15 @@ class ScreenshotManager:
                 logger.info("Coverage evaluation completed")
                 
                 try:
-                    final_output = await result.final_output
-                    logger.info("Successfully got final output from coverage agent")
-                    return final_output
+                    # Get the final output but handle the case where it might not be awaitable
+                    if asyncio.iscoroutine(result.final_output):
+                        final_output = await result.final_output
+                        logger.info("Successfully got final output from coverage agent")
+                        return final_output
+                    else:
+                        # Handle case where result is already a value, not a coroutine
+                        logger.info("Coverage result is not awaitable, using directly")
+                        return result.final_output
                 except Exception as e:
                     logger.error(f"Error getting final output from coverage agent: {str(e)}")
                     logger.debug(f"Stack trace: {traceback.format_exc()}")

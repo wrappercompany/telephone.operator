@@ -28,7 +28,8 @@ class AppiumContext:
             if not self.state:
                 logger.info("Creating new AppState")
                 self.state = AppState()
-            self.state = self.state.model_copy(update=kwargs)
+            # Update for Pydantic v2 compatibility
+            self.state = AppState.model_validate(self.state.model_dump() | kwargs)
             logger.debug(f"State updated: {self.state}")
         except Exception as e:
             logger.error(f"Error updating state: {str(e)}")

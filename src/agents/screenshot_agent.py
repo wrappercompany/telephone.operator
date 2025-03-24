@@ -102,7 +102,7 @@ class ScreenshotAgent:
             result = {
                 "screenshot": screenshot_path,
                 "page_source": page_source,
-                "state": self.context.state.dict() if self.context.state else {}
+                "state": self.context.state.model_dump() if self.context.state else {}
             }
             
             logger.debug(f"Capture result: {result}")
@@ -117,7 +117,7 @@ class ScreenshotAgent:
                 "error": error_msg,
                 "screenshot": None,
                 "page_source": None,
-                "state": self.context.state.dict() if self.context.state else {}
+                "state": self.context.state.model_dump() if self.context.state else {}
             }
 
 screenshot_taker = Agent(

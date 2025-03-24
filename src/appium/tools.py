@@ -234,16 +234,51 @@ async def launch_app(bundle_id: str) -> str:
     Args:
         bundle_id: The bundle ID of the app to launch
     """
+    logger.info(f"Tool called: launch_app with bundle_id={bundle_id}")
+    
+    if not bundle_id:
+        error_msg = "Bundle ID cannot be empty"
+        logger.error(error_msg)
+        print_error(error_msg)
+        return error_msg
+    
     try:
+        # Check if driver exists and try to relaunch app
         if ios_driver.driver:
-            ios_driver.driver.terminate_app(bundle_id)
-            ios_driver.driver.activate_app(bundle_id)
-            return f"Successfully launched app with bundle ID: {bundle_id}"
+            logger.info(f"Driver exists, attempting to terminate and reactivate app: {bundle_id}")
+            try:
+                ios_driver.driver.terminate_app(bundle_id)
+                ios_driver.driver.activate_app(bundle_id)
+                success_msg = f"Successfully relaunched app with bundle ID: {bundle_id}"
+                logger.info(success_msg)
+                print_success(success_msg)
+                return success_msg
+            except Exception as e:
+                logger.warning(f"Failed to relaunch app via existing driver: {str(e)}")
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                logger.info("Will try to re-initialize driver")
+                ios_driver.cleanup()
         
-        ios_driver.init_driver(bundle_id)
-        return f"Successfully launched app with bundle ID: {bundle_id}"
+        # Initialize driver
+        logger.info(f"Initializing driver for app: {bundle_id}")
+        result = ios_driver.init_driver(bundle_id)
+        
+        if result:
+            success_msg = f"Successfully launched app with bundle ID: {bundle_id}"
+            logger.info(success_msg)
+            print_success(success_msg)
+            return success_msg
+        else:
+            error_msg = f"Failed to initialize driver for app: {bundle_id}"
+            logger.error(error_msg)
+            print_error(error_msg)
+            return error_msg
     except Exception as e:
-        return f"Failed to launch app: {str(e)}"
+        error_msg = f"Failed to launch app: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg
 
 @function_tool
 async def take_screenshot() -> str:

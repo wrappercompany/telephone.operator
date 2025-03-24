@@ -9,6 +9,12 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 import logging
 import weakref
 import traceback
+import sys
+from pathlib import Path
+
+# Add the parent directory to sys.path to allow importing from src
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from src.config import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +23,7 @@ class IOSDriver:
     
     def __init__(self):
         self.driver = None
+        self.config = load_config()
         # Add self to the set of instances
         self._instances.add(weakref.ref(self))
         logger.debug("IOSDriver instance created")
@@ -44,16 +51,38 @@ class IOSDriver:
             self.cleanup()
             
         logger.info(f"Initializing iOS driver for bundle ID: {bundle_id}")
-        caps = {
-            'platformName': 'iOS',
-            'automationName': 'XCUITest',
-            'deviceName': 'iPhone 15',
-            'bundleId': bundle_id,
-        }
+        appium_config = self.config.appium
+        
+        # Create Appium options object for newer Appium versions
+        from appium.options.ios import XCUITestOptions
+        options = XCUITestOptions()
+        
+        # Set required capabilities
+        options.platform_name = appium_config.platform_name
+        options.automation_name = appium_config.automation_name
+        options.device_name = appium_config.device_name
+        options.platform_version = appium_config.platform_version
+        options.bundle_id = bundle_id
+        
+        # Add WDA capabilities for more reliable connections
+        options.set_capability("wdaStartupRetries", 4)
+        options.set_capability("wdaStartupRetryInterval", 20000)
+        options.set_capability("useNewWDA", False)
+        
+        # Construct Appium server URL
+        server_url = f'http://{appium_config.host}:{appium_config.port}'
         
         try:
-            logger.debug(f"Connecting to Appium with capabilities: {caps}")
-            self.driver = webdriver.Remote('http://localhost:4723', caps)
+            logger.debug(f"Connecting to Appium server at {server_url}")
+            logger.debug(f"Using options: {options.to_capabilities()}")
+            
+            # Create the driver with options
+            self.driver = webdriver.Remote(command_executor=server_url, options=options)
+            
+            if not self.driver:
+                logger.error("Driver creation returned None")
+                return False
+                
             logger.info("Successfully initialized iOS driver")
             return True
         except Exception as e:
