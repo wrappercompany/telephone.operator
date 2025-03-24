@@ -546,7 +546,7 @@ async def main():
                 screenshot_result = await Runner.run(
                     screenshot_taker,
                     input_items,
-                    config=run_config,  # Add run config with disabled tracing
+                    run_config=run_config,  # Changed from config to run_config
                     max_turns=30
                 )
 
@@ -564,7 +564,7 @@ async def main():
                 evaluator_result = await Runner.run(
                     coverage_evaluator,
                     input_items,
-                    config=run_config,  # Add run config with disabled tracing
+                    run_config=run_config,  # Changed from config to run_config
                     max_turns=20
                 )
                 result: CoverageEvaluation = evaluator_result.final_output
