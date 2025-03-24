@@ -1,1 +1,12 @@
 NEVER USE EMOJIS
+
+# UV Package Manager Configuration
+- Use UV package manager for Python dependency management
+- Initialize new projects with: uv init
+- Install packages with: uv add [package-name]
+- Remove packages with: uv remove [package-name]
+- Update dependencies with: uv sync
+- Create virtual environments automatically with UV
+- Use uv.lock and pyproject.toml for dependency management
+- Run Python scripts with: uv run [script-name]
+- Install Python versions with: uv python install [version]
