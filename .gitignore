@@ -2,3 +2,4 @@ __pycache__
 logs/
 .pytest_cache/
 page_source_logs/
+test_artifacts/

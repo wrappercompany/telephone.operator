@@ -322,21 +322,44 @@ async def launch_app(bundle_id: str) -> str:
 
 @function_tool
 async def take_screenshot() -> str:
-    """Take a screenshot of the current app state."""
+    """Take a screenshot and save page source of the current app state."""
     if not ios_driver.driver:
         return "No active Appium session"
     
     try:
-        screenshots_dir = Path("screenshots")
-        screenshots_dir.mkdir(exist_ok=True)
+        # Get current app bundle ID or use "unknown_app" as fallback
+        try:
+            current_app = ios_driver.driver.current_package or "unknown_app"
+            # Clean up bundle ID to make it filesystem friendly
+            app_dir_name = current_app.split('.')[-1].lower()
+        except:
+            app_dir_name = "unknown_app"
         
+        # Create base output directory structure
+        output_dir = Path("test_artifacts")
+        app_dir = output_dir / app_dir_name
+        screenshots_dir = app_dir / "screenshots"
+        pagesource_dir = app_dir / "pagesource"
+        
+        # Create directories if they don't exist
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        pagesource_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate timestamp for both files
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = screenshots_dir / f"screenshot_{timestamp}.png"
+        pagesource_path = pagesource_dir / f"pagesource_{timestamp}.xml"
         
+        # Take screenshot
         ios_driver.driver.get_screenshot_as_file(str(screenshot_path))
-        return f"Screenshot saved successfully at: {screenshot_path}"
+        
+        # Get and save page source
+        page_source = ios_driver.driver.page_source
+        pagesource_path.write_text(page_source, encoding='utf-8')
+        
+        return f"Artifacts saved successfully:\nApp: {current_app}\nScreenshot: {screenshot_path}\nPage Source: {pagesource_path}"
     except Exception as e:
-        return f"Failed to take screenshot: {str(e)}"
+        return f"Failed to capture artifacts: {str(e)}"
 
 @dataclass
 class CoverageEvaluation:
