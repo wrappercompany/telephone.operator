@@ -7,6 +7,7 @@
 #   "pytest-asyncio",
 #   "pytest-xdist",
 #   "appium-python-client>=3.1.1",
+#   "rich>=13.0.0,<14.0.0",
 # ]
 # ///
 
@@ -21,6 +22,15 @@ from appium import webdriver
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.common.appiumby import AppiumBy
 from appium.webdriver.appium_service import AppiumService
+from rich.console import Console
+from rich.panel import Panel
+from rich.traceback import install
+
+# Install rich traceback handler
+install(show_locals=True)
+
+# Create rich console instance
+console = Console()
 
 class LocatorStrategy(str, Enum):
     ACCESSIBILITY_ID = "accessibility_id"
@@ -84,13 +94,18 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
         format_output: If True, formats the XML for better readability
     """
     if not ios_driver.driver:
+        console.print("[red]No active Appium session[/red]")
         return "No active Appium session"
     
     try:
         page_source = ios_driver.driver.page_source
+        if format_output:
+            console.print(Panel(page_source, title="Page Source", border_style="blue"))
         return page_source
     except Exception as e:
-        return f"Failed to get page source: {str(e)}"
+        error_msg = f"Failed to get page source: {str(e)}"
+        console.print(f"[red]{error_msg}[/red]")
+        return error_msg
 
 @function_tool
 async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) -> str:
@@ -102,6 +117,7 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         by: The locator strategy to use
     """
     if not ios_driver.driver:
+        console.print("[red]No active Appium session[/red]")
         return "No active Appium session"
     
     try:
@@ -115,9 +131,13 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
         element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
         element.click()
-        return f"Successfully tapped element with {by_strategy}: {element_id}"
+        success_msg = f"Successfully tapped element with {by_strategy}: {element_id}"
+        console.print(f"[green]{success_msg}[/green]")
+        return success_msg
     except Exception as e:
-        return f"Failed to tap element: {str(e)}"
+        error_msg = f"Failed to tap element: {str(e)}"
+        console.print(f"[red]{error_msg}[/red]")
+        return error_msg
 
 @function_tool
 async def press_physical_button(button: PhysicalButton) -> str:
@@ -271,20 +291,22 @@ ios_agent = Agent(
 async def main():
     # Make sure to set your OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
-        print("Please set your OPENAI_API_KEY environment variable")
+        console.print("[red]Please set your OPENAI_API_KEY environment variable[/red]")
         return
     
     try:
-        # Test the agent with a simple query
-        result = await Runner.run(
-            ios_agent, 
-            input="Can you launch Safari and navigate to openai.com?"
-        )
-        print("\nAgent Response:")
-        print(result.final_output)
+        with console.status("[bold blue]Running iOS automation...[/bold blue]"):
+            # Test the agent with a simple query
+            result = await Runner.run(
+                ios_agent, 
+                input="Can you launch Safari and navigate to openai.com?"
+            )
+            console.print("\n[bold]Agent Response:[/bold]")
+            console.print(Panel(result.final_output, border_style="green"))
     finally:
         # Clean up resources
         await ios_driver.cleanup()
+        console.print("[yellow]Cleanup completed[/yellow]")
 
 if __name__ == "__main__":
     asyncio.run(main()) 
