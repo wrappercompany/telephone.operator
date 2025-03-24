@@ -24,7 +24,7 @@ from typing import Optional, Dict, Any, Tuple, Literal
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
-from agents import Agent, Runner, function_tool, ItemHelpers, TResponseInputItem, trace
+from agents import Agent, Runner, function_tool, ItemHelpers, TResponseInputItem, trace, AgentHooks, RunConfig
 from appium import webdriver
 from appium.options.ios import XCUITestOptions
 from appium.webdriver.common.appiumby import AppiumBy
@@ -35,6 +35,8 @@ from rich.traceback import install
 from rich.table import Table
 from rich.live import Live
 from dotenv import load_dotenv
+from pydantic import BaseModel
+import openai
 
 # Install rich traceback handler
 install(show_locals=True)
@@ -380,6 +382,36 @@ class CoverageEvaluation:
     score: Literal["complete", "needs_more", "insufficient"]
     missing_areas: list[str]
 
+class AppState(BaseModel):
+    current_app: str
+    bundle_id: str
+    last_action: str
+    screenshot_count: int
+    coverage_score: float
+
+class AppiumContext:
+    def __init__(self, driver: IOSDriver):
+        self.driver = driver
+        self.state = AppState(
+            current_app="",
+            bundle_id="",
+            last_action="",
+            screenshot_count=0,
+            coverage_score=0.0
+        )
+
+    async def update_state(self, **kwargs):
+        self.state = self.state.model_copy(update=kwargs)
+
+class AppiumHooks(AgentHooks):
+    async def before_run(self, context: AppiumContext):
+        # Pre-run setup
+        await context.driver.initialize()
+    
+    async def after_run(self, context: AppiumContext):
+        # Cleanup
+        await context.driver.cleanup()
+
 screenshot_taker = Agent(
     name="screenshot_taker",
     instructions=f"""You are a specialized iOS screenshot capture assistant. Your mission is to systematically capture screenshots of every screen, state, and interaction in the app to create a comprehensive visual reference library.
@@ -413,7 +445,8 @@ Remember: Be thorough and systematic in your exploration. After each set of acti
         navigate_to,
         launch_app,
         take_screenshot
-    ]
+    ],
+    hooks=AppiumHooks()
 )
 
 coverage_evaluator = Agent[None](
@@ -484,48 +517,55 @@ async def main():
 
         latest_screenshots: list[str] = []
         iteration_count = 0
-        max_iterations = 20  # Increased from 10 to 20
+        max_iterations = 20
         
         # Start tool logging
         tool_logger.start_live_display()
         logger.info("Started tool logging display")
 
-        # Main workflow trace
-        with trace("Screenshot Coverage Evaluation"):
-            while iteration_count < max_iterations:
-                iteration_count += 1
-                logger.info(f"Starting iteration {iteration_count}/{max_iterations}")
-                
-                # Clear screen for new iteration
-                console.clear()
-                
-                # Show iteration progress
-                console.print(f"\nIteration {iteration_count}/{max_iterations}")
-                
-                # Run screenshot taker
+        # Create run config with tracing disabled
+        run_config = RunConfig(
+            tracing_disabled=True,  # Disable tracing
+        )
+
+        # Main workflow
+        while iteration_count < max_iterations:
+            iteration_count += 1
+            logger.info(f"Starting iteration {iteration_count}/{max_iterations}")
+            
+            # Clear screen for new iteration
+            console.clear()
+            
+            # Show iteration progress
+            console.print(f"\nIteration {iteration_count}/{max_iterations}")
+            
+            try:
+                # Run screenshot taker with error handling and disabled tracing
                 console.print("\nScreenshot Taker: Capturing screenshots...")
                 logger.info("Running screenshot capture sequence")
                 screenshot_result = await Runner.run(
                     screenshot_taker,
                     input_items,
-                    max_turns=30  # Increased max turns for screenshot taker
+                    config=run_config,  # Add run config with disabled tracing
+                    max_turns=30
                 )
 
                 input_items = screenshot_result.to_input_list()
                 latest_action = ItemHelpers.text_message_outputs(screenshot_result.new_items)
-                logger.info(f"Screenshot action completed: {latest_action[:200]}...")  # Log first 200 chars
+                logger.info(f"Screenshot action completed: {latest_action[:200]}...")
                 
                 # Show screenshot results
                 console.print("\nScreenshot Results:")
                 console.print(Panel(latest_action, border_style="blue"))
 
-                # Run coverage evaluator
+                # Run coverage evaluator with disabled tracing
                 console.print("\nEvaluator: Analyzing coverage...")
                 logger.info("Running coverage evaluation")
                 evaluator_result = await Runner.run(
                     coverage_evaluator,
                     input_items,
-                    max_turns=20  # Increased max turns for evaluator
+                    config=run_config,  # Add run config with disabled tracing
+                    max_turns=20
                 )
                 result: CoverageEvaluation = evaluator_result.final_output
                 logger.info(f"Coverage evaluation completed - Score: {result.score}")
@@ -557,6 +597,19 @@ async def main():
                 
                 # Brief pause to show results
                 await asyncio.sleep(2)
+
+            except Exception as e:
+                logger.error(f"Error during iteration {iteration_count}: {str(e)}")
+                console.print(f"[red]Error during iteration {iteration_count}:[/red] {str(e)}")
+                
+                # If we hit an API error, add a longer delay before retrying
+                if isinstance(e, openai.NotFoundError):
+                    console.print("[yellow]API error encountered. Waiting 5 seconds before retrying...[/yellow]")
+                    await asyncio.sleep(5)
+                    continue
+                
+                # For other errors, we might want to break the loop
+                break
 
     except Exception as e:
         logger.error(f"An error occurred during execution: {str(e)}", exc_info=True)
