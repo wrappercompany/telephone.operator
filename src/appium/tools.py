@@ -5,9 +5,14 @@ from appium.webdriver.common.appiumby import AppiumBy
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+import logging
+import traceback
+from typing import Optional, Dict, Any, Tuple
 from .driver import ios_driver
+from .enums import AppiumStatus, AppAction
 from ..ui.console import console, Panel, print_error, print_warning, print_success
+
+logger = logging.getLogger(__name__)
 
 class LocatorStrategy(str, Enum):
     ACCESSIBILITY_ID = "accessibility_id"
@@ -27,6 +32,15 @@ class SwipeDirection(str, Enum):
     LEFT = "left"
     RIGHT = "right"
 
+def check_driver_connection() -> Tuple[bool, str]:
+    """Check if driver is connected and return status."""
+    if not ios_driver.driver:
+        error_msg = "No active Appium session"
+        logger.error(error_msg)
+        print_error(error_msg)
+        return False, error_msg
+    return True, "Driver connected"
+
 @function_tool
 async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Optional[bool] = None) -> str:
     """
@@ -36,17 +50,28 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
         diff_only: If True, returns only the diff from the previous page source
         format_output: If True, formats the XML for better readability
     """
-    if not ios_driver.driver:
-        print_error("No active Appium session")
-        return "No active Appium session"
+    logger.info("Tool called: get_page_source")
+    driver_status, message = check_driver_connection()
+    if not driver_status:
+        return message
     
     try:
+        logger.debug("Requesting page source from driver")
         page_source = ios_driver.driver.page_source
+        if not page_source:
+            error_msg = "Page source is empty"
+            logger.warning(error_msg)
+            return error_msg
+            
         if format_output:
             console.print(Panel(page_source, title="Page Source", border_style="blue"))
+            
+        logger.info("Page source retrieved successfully")
         return page_source
     except Exception as e:
         error_msg = f"Failed to get page source: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
         return error_msg
 
@@ -60,9 +85,16 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         element_id: The identifier of the element to tap
         by: The locator strategy to use
     """
-    if not ios_driver.driver:
-        print_error("No active Appium session")
-        return "No active Appium session"
+    logger.info(f"Tool called: tap_element with id={element_id}, by={by}")
+    driver_status, message = check_driver_connection()
+    if not driver_status:
+        return message
+    
+    if not element_id:
+        error_msg = "Element ID cannot be empty"
+        logger.error(error_msg)
+        print_error(error_msg)
+        return error_msg
     
     try:
         locator_map = {
@@ -73,20 +105,32 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         }
         
         by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
-        element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
+        logger.debug(f"Using locator strategy: {by_strategy} with value: {element_id}")
+        
+        try:
+            element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
+        except Exception as e:
+            error_msg = f"Element not found: {str(e)}"
+            logger.warning(error_msg)
+            print_warning(error_msg)
+            return error_msg
         
         # Check if element is visible
         if not element.is_displayed():
-            error_msg = f"Element with {by_strategy}: {element_id} is not visible"
-            print_warning(error_msg)
-            return error_msg
+            warning_msg = f"Element with {by_strategy}: {element_id} is not visible"
+            logger.warning(warning_msg)
+            print_warning(warning_msg)
+            return warning_msg
             
         element.click()
         success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
+        logger.info(success_msg)
         print_success(success_msg)
         return success_msg
     except Exception as e:
         error_msg = f"Failed to tap element: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
         return error_msg
 
@@ -204,20 +248,23 @@ async def launch_app(bundle_id: str) -> str:
 @function_tool
 async def take_screenshot() -> str:
     """Take a screenshot and save page source of the current app state."""
-    if not ios_driver.driver:
-        return "No active Appium session"
+    logger.info("Tool called: take_screenshot")
+    driver_status, message = check_driver_connection()
+    if not driver_status:
+        return message
     
     try:
         # Get current app bundle ID or use "unknown_app" as fallback
         app_dir_name = "unknown_app"
         try:
             # For iOS, we get the bundle ID from capabilities
-            bundle_id = ios_driver.driver.capabilities['bundleId']
+            bundle_id = ios_driver.driver.capabilities.get('bundleId')
             if bundle_id:
                 # Clean up bundle ID to make it filesystem friendly
                 app_dir_name = bundle_id.split('.')[-1].lower()
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not get bundle ID: {str(e)}")
+            # Continue with the default app_dir_name
         
         # Create base output directory structure
         output_dir = Path("test_artifacts")
@@ -235,12 +282,21 @@ async def take_screenshot() -> str:
         pagesource_path = pagesource_dir / f"pagesource_{timestamp}.xml"
         
         # Take screenshot
+        logger.debug(f"Saving screenshot to: {screenshot_path}")
         ios_driver.driver.get_screenshot_as_file(str(screenshot_path))
         
         # Get and save page source
+        logger.debug(f"Saving page source to: {pagesource_path}")
         page_source = ios_driver.driver.page_source
         pagesource_path.write_text(page_source, encoding='utf-8')
         
-        return f"Artifacts saved successfully:\nApp: {bundle_id if 'bundleId' in ios_driver.driver.capabilities else app_dir_name}\nScreenshot: {screenshot_path}\nPage Source: {pagesource_path}"
+        success_msg = f"Artifacts saved successfully:\nApp: {bundle_id if 'bundleId' in ios_driver.driver.capabilities else app_dir_name}\nScreenshot: {screenshot_path}\nPage Source: {pagesource_path}"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
     except Exception as e:
-        return f"Failed to capture artifacts: {str(e)}" 
+        error_msg = f"Failed to capture artifacts: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg 

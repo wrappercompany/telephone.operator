@@ -28,3 +28,6 @@ logs/
 page_source_logs/
 telephone_operator.log
 *.env
+
+
+.venv/
