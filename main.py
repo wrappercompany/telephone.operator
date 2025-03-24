@@ -18,7 +18,6 @@ import os
 import requests
 import subprocess
 import time
-import logging
 from enum import Enum
 from typing import Optional, Dict, Any, Tuple, Literal
 from datetime import datetime
@@ -40,18 +39,6 @@ import openai
 
 # Install rich traceback handler
 install(show_locals=True)
-
-# Configure logging
-log_file = "telephone_operator.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, mode='w'),  # 'w' mode overwrites the file on each run
-        logging.StreamHandler()  # Also print to console
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # Create rich console instance
 console = Console()
@@ -107,48 +94,6 @@ class IOSDriver:
 
 # Create global driver instance
 ios_driver = IOSDriver()
-
-class ToolCallLogger:
-    def __init__(self):
-        self.tool_calls = []
-        self.console = Console()
-        self.live = None
-        
-    def log_tool_call(self, tool_name: str, args: Dict[str, Any]):
-        self.tool_calls.append({
-            "tool": tool_name,
-            "args": args,
-            "timestamp": datetime.now()
-        })
-        self._display_tool_calls()
-    
-    def _display_tool_calls(self):
-        table = Table(title="Tool Calls History")
-        table.add_column("Time", style="cyan")
-        table.add_column("Tool", style="green")
-        table.add_column("Arguments", style="yellow")
-        
-        for call in self.tool_calls:
-            time_str = call["timestamp"].strftime("%H:%M:%S")
-            args_str = ", ".join(f"{k}={v}" for k, v in call["args"].items())
-            table.add_row(time_str, call["tool"], args_str)
-        
-        if self.live:
-            self.live.update(table)
-        else:
-            self.console.print(table)
-
-    def start_live_display(self):
-        self.live = Live(auto_refresh=False)
-        self.live.start()
-
-    def stop_live_display(self):
-        if self.live:
-            self.live.stop()
-            self.live = None
-
-# Create global instances
-tool_logger = ToolCallLogger()
 
 # Wrap each tool function to add logging
 def wrap_tool_with_logging(tool):
@@ -412,9 +357,21 @@ class AppiumHooks(AgentHooks):
         # Cleanup
         await context.driver.cleanup()
 
+# Wrap tools with logging
+tools = [
+    wrap_tool_with_logging(get_page_source),
+    wrap_tool_with_logging(tap_element),
+    wrap_tool_with_logging(press_physical_button),
+    wrap_tool_with_logging(swipe),
+    wrap_tool_with_logging(send_input),
+    wrap_tool_with_logging(navigate_to),
+    wrap_tool_with_logging(launch_app),
+    wrap_tool_with_logging(take_screenshot)
+]
+
 screenshot_taker = Agent(
     name="screenshot_taker",
-    instructions=f"""You are a specialized iOS screenshot capture assistant. Your mission is to systematically capture screenshots of every screen, state, and interaction in the app to create a comprehensive visual reference library.
+    instructions="""You are a specialized iOS screenshot capture assistant. Your mission is to systematically capture screenshots of every screen, state, and interaction in the app to create a comprehensive visual reference library.
 
 Key Responsibilities:
 1. Complete Coverage
@@ -436,16 +393,7 @@ Key Responsibilities:
    - In correct device orientation
 
 Remember: Be thorough and systematic in your exploration. After each set of actions, describe what you've captured and what you plan to explore next.""",
-    tools=[
-        get_page_source,
-        tap_element,
-        press_physical_button,
-        swipe,
-        send_input,
-        navigate_to,
-        launch_app,
-        take_screenshot
-    ],
+    tools=tools,  # Use the wrapped tools
     hooks=AppiumHooks()
 )
 
@@ -473,6 +421,27 @@ Your feedback should be:
     output_type=CoverageEvaluation
 )
 
+class ToolCallLogger:
+    def __init__(self):
+        self.console = Console()
+        
+    def log_tool_call(self, tool_name: str, args: Dict[str, Any]):
+        # Filter out None values from args
+        args_str = ", ".join(f"{k}={v}" for k, v in args.items() if v is not None)
+        self.console.print(f"[cyan]Using tool:[/cyan] [green]{tool_name}[/green] [yellow]{args_str}[/yellow]")
+    
+    def start_live_display(self):
+        pass  # No-op, not needed anymore
+    
+    def stop_live_display(self):
+        pass  # No-op, not needed anymore
+    
+    def clear_history(self):
+        pass  # No-op, not needed anymore
+
+# Create global tool logger instance
+tool_logger = ToolCallLogger()
+
 async def main():
     # Load environment variables from .env file
     load_dotenv()
@@ -480,7 +449,6 @@ async def main():
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
         error_msg = "Error: OPENAI_API_KEY not found in environment variables or .env file"
-        logger.error(error_msg)
         console.print(f"[red]{error_msg}[/red]")
         console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
         console.print("OPENAI_API_KEY=your_api_key_here")
@@ -489,17 +457,13 @@ async def main():
     # Check and start Appium server if needed
     server_running, status_message = check_appium_server()
     if not server_running:
-        logger.warning("Appium server is not running. Attempting to start it...")
         console.print("[yellow]Appium server is not running. Attempting to start it...[/yellow]")
         server_started, start_message = start_appium_server()
         if not server_started:
-            logger.error(f"Failed to start Appium server: {start_message}")
             console.print(f"[red]Error: {start_message}[/red]")
             return
-        logger.info(f"Appium server started: {start_message}")
         console.print(f"[green]{start_message}[/green]")
     else:
-        logger.info(f"Appium server status: {status_message}")
         console.print(f"[green]{status_message}[/green]")
     
     try:
@@ -508,7 +472,6 @@ async def main():
             "name": "Messages",  # Human readable name
             "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
         }
-        logger.info(f"Starting test session for app: {target_app['name']} ({target_app['bundle_id']})")
 
         input_items: list[TResponseInputItem] = [{
             "content": f"Please launch {target_app['name']} and start capturing screenshots systematically.",
@@ -521,7 +484,6 @@ async def main():
         
         # Start tool logging
         tool_logger.start_live_display()
-        logger.info("Started tool logging display")
 
         # Create run config with tracing disabled
         run_config = RunConfig(
@@ -531,47 +493,45 @@ async def main():
         # Main workflow
         while iteration_count < max_iterations:
             iteration_count += 1
-            logger.info(f"Starting iteration {iteration_count}/{max_iterations}")
             
             # Clear screen for new iteration
             console.clear()
             
             # Show iteration progress
-            console.print(f"\nIteration {iteration_count}/{max_iterations}")
+            console.print(f"\n[bold cyan]Iteration {iteration_count}/{max_iterations}[/bold cyan]")
             
             try:
+                # Clear previous tool calls for this iteration
+                tool_logger.clear_history()
+                
                 # Run screenshot taker with error handling and disabled tracing
-                console.print("\nScreenshot Taker: Capturing screenshots...")
-                logger.info("Running screenshot capture sequence")
+                console.print("\n[bold green]Screenshot Taker:[/bold green] Capturing screenshots...")
                 screenshot_result = await Runner.run(
                     screenshot_taker,
                     input_items,
-                    run_config=run_config,  # Changed from config to run_config
+                    run_config=run_config,
                     max_turns=30
                 )
 
                 input_items = screenshot_result.to_input_list()
                 latest_action = ItemHelpers.text_message_outputs(screenshot_result.new_items)
-                logger.info(f"Screenshot action completed: {latest_action[:200]}...")
                 
                 # Show screenshot results
-                console.print("\nScreenshot Results:")
+                console.print("\n[bold green]Screenshot Results:[/bold green]")
                 console.print(Panel(latest_action, border_style="blue"))
 
                 # Run coverage evaluator with disabled tracing
-                console.print("\nEvaluator: Analyzing coverage...")
-                logger.info("Running coverage evaluation")
+                console.print("\n[bold green]Evaluator:[/bold green] Analyzing coverage...")
                 evaluator_result = await Runner.run(
                     coverage_evaluator,
                     input_items,
-                    run_config=run_config,  # Changed from config to run_config
+                    run_config=run_config,
                     max_turns=20
                 )
                 result: CoverageEvaluation = evaluator_result.final_output
-                logger.info(f"Coverage evaluation completed - Score: {result.score}")
 
                 # Show evaluation results
-                console.print("\nCoverage Analysis:")
+                console.print("\n[bold green]Coverage Analysis:[/bold green]")
                 console.print(Panel(
                     f"Score: {result.score}\n\nFeedback:\n{result.feedback}\n\nMissing Areas:\n" + "\n".join([f"- {area}" for area in result.missing_areas]),
                     border_style="yellow",
@@ -579,13 +539,11 @@ async def main():
                 ))
 
                 if result.score == "complete":
-                    logger.info("Screenshot coverage is complete")
-                    console.print("\nScreenshot coverage is complete.")
+                    console.print("\n[bold green]Screenshot coverage is complete.[/bold green]")
                     break
 
                 if iteration_count == max_iterations:
-                    logger.warning("Maximum iterations reached without complete coverage")
-                    console.print("\nMaximum iterations reached. Please review coverage and run again if needed.")
+                    console.print("\n[bold yellow]Maximum iterations reached. Please review coverage and run again if needed.[/bold yellow]")
                     break
 
                 # Add feedback for next iteration
@@ -593,32 +551,20 @@ async def main():
                     "content": f"Coverage Feedback: {result.feedback}\nPlease capture screenshots of: {', '.join(result.missing_areas)}",
                     "role": "user"
                 })
-                logger.info(f"Added feedback for next iteration. Missing areas: {', '.join(result.missing_areas)}")
                 
                 # Brief pause to show results
                 await asyncio.sleep(2)
 
             except Exception as e:
-                logger.error(f"Error during iteration {iteration_count}: {str(e)}")
-                console.print(f"[red]Error during iteration {iteration_count}:[/red] {str(e)}")
-                
-                # If we hit an API error, add a longer delay before retrying
-                if isinstance(e, openai.NotFoundError):
-                    console.print("[yellow]API error encountered. Waiting 5 seconds before retrying...[/yellow]")
-                    await asyncio.sleep(5)
-                    continue
-                
-                # For other errors, we might want to break the loop
+                console.print(f"\n[bold red]Error:[/bold red] {str(e)}")
                 break
 
     except Exception as e:
-        logger.error(f"An error occurred during execution: {str(e)}", exc_info=True)
         raise
     finally:
         # Clean up resources
         tool_logger.stop_live_display()
         await ios_driver.cleanup()
-        logger.info("Cleanup completed")
         console.print("[yellow]Cleanup completed[/yellow]")
 
 def start_appium_server() -> Tuple[bool, str]:
