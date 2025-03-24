@@ -95,16 +95,56 @@ class IOSDriver:
 # Create global driver instance
 ios_driver = IOSDriver()
 
-# Wrap each tool function to add logging
-def wrap_tool_with_logging(tool):
-    original_on_invoke = tool.on_invoke_tool
+# Reset functionality
+def reset_environment():
+    """Reset all global state and environment variables"""
+    global ios_driver
     
-    async def logged_invoke(*args, **kwargs):
-        tool_logger.log_tool_call(tool.name, kwargs)
-        return await original_on_invoke(*args, **kwargs)
+    # Clear any existing Appium session
+    if ios_driver and ios_driver.driver:
+        try:
+            ios_driver.driver.quit()
+        except:
+            pass
+    if ios_driver and ios_driver.appium_service:
+        try:
+            ios_driver.appium_service.stop()
+        except:
+            pass
+            
+    # Create fresh IOSDriver instance
+    ios_driver = IOSDriver()
     
-    tool.on_invoke_tool = logged_invoke
-    return tool
+    # Clear any cached items/state
+    if hasattr(Runner, '_instance'):
+        Runner._instance = None
+    
+    # Reset OpenAI-related state
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    
+    # Clear any test artifacts
+    test_artifacts = Path("test_artifacts")
+    if test_artifacts.exists():
+        try:
+            for item in test_artifacts.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    for subitem in item.iterdir():
+                        if subitem.is_file():
+                            subitem.unlink()
+                    item.rmdir()
+            test_artifacts.rmdir()
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not fully clean test_artifacts: {e}[/yellow]")
+            
+    # Create fresh test_artifacts directory
+    test_artifacts.mkdir(exist_ok=True)
+    
+    console.print("[green]Environment reset complete[/green]")
+
+# Reset environment at startup
+reset_environment()
 
 @function_tool
 async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Optional[bool] = None) -> str:
@@ -288,12 +328,15 @@ async def take_screenshot() -> str:
     
     try:
         # Get current app bundle ID or use "unknown_app" as fallback
+        app_dir_name = "unknown_app"
         try:
-            current_app = ios_driver.driver.current_package or "unknown_app"
-            # Clean up bundle ID to make it filesystem friendly
-            app_dir_name = current_app.split('.')[-1].lower()
+            # For iOS, we get the bundle ID from capabilities
+            bundle_id = ios_driver.driver.capabilities['bundleId']
+            if bundle_id:
+                # Clean up bundle ID to make it filesystem friendly
+                app_dir_name = bundle_id.split('.')[-1].lower()
         except:
-            app_dir_name = "unknown_app"
+            pass
         
         # Create base output directory structure
         output_dir = Path("test_artifacts")
@@ -317,7 +360,7 @@ async def take_screenshot() -> str:
         page_source = ios_driver.driver.page_source
         pagesource_path.write_text(page_source, encoding='utf-8')
         
-        return f"Artifacts saved successfully:\nApp: {current_app}\nScreenshot: {screenshot_path}\nPage Source: {pagesource_path}"
+        return f"Artifacts saved successfully:\nApp: {bundle_id if 'bundleId' in ios_driver.driver.capabilities else app_dir_name}\nScreenshot: {screenshot_path}\nPage Source: {pagesource_path}"
     except Exception as e:
         return f"Failed to capture artifacts: {str(e)}"
 
@@ -357,18 +400,6 @@ class AppiumHooks(AgentHooks):
         # Cleanup
         await context.driver.cleanup()
 
-# Wrap tools with logging
-tools = [
-    wrap_tool_with_logging(get_page_source),
-    wrap_tool_with_logging(tap_element),
-    wrap_tool_with_logging(press_physical_button),
-    wrap_tool_with_logging(swipe),
-    wrap_tool_with_logging(send_input),
-    wrap_tool_with_logging(navigate_to),
-    wrap_tool_with_logging(launch_app),
-    wrap_tool_with_logging(take_screenshot)
-]
-
 screenshot_taker = Agent(
     name="screenshot_taker",
     instructions="""You are a specialized iOS screenshot capture assistant. Your mission is to systematically capture screenshots of every screen, state, and interaction in the app to create a comprehensive visual reference library.
@@ -393,7 +424,16 @@ Key Responsibilities:
    - In correct device orientation
 
 Remember: Be thorough and systematic in your exploration. After each set of actions, describe what you've captured and what you plan to explore next.""",
-    tools=tools,  # Use the wrapped tools
+    tools=[
+        get_page_source,
+        tap_element,
+        press_physical_button,
+        swipe,
+        send_input,
+        navigate_to,
+        launch_app,
+        take_screenshot
+    ],
     hooks=AppiumHooks()
 )
 
@@ -443,6 +483,9 @@ class ToolCallLogger:
 tool_logger = ToolCallLogger()
 
 async def main():
+    # Reset the environment at the start
+    reset_environment()
+    
     # Load environment variables from .env file
     load_dotenv()
     
@@ -467,12 +510,27 @@ async def main():
         console.print(f"[green]{status_message}[/green]")
     
     try:
+        # Create fresh instances of agents to ensure clean state
+        screenshot_taker_instance = Agent(
+            name=screenshot_taker.name,
+            instructions=screenshot_taker.instructions,
+            tools=screenshot_taker.tools,
+            hooks=screenshot_taker.hooks
+        )
+        
+        coverage_evaluator_instance = Agent[None](
+            name=coverage_evaluator.name,
+            instructions=coverage_evaluator.instructions,
+            output_type=coverage_evaluator.output_type
+        )
+
         # Create agent with target app configuration
         target_app = {
             "name": "Messages",  # Human readable name
             "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
         }
 
+        # Start with fresh input items
         input_items: list[TResponseInputItem] = [{
             "content": f"Please launch {target_app['name']} and start capturing screenshots systematically.",
             "role": "user"
@@ -482,12 +540,13 @@ async def main():
         iteration_count = 0
         max_iterations = 20
         
-        # Start tool logging
+        # Start tool logging with fresh state
+        tool_logger = ToolCallLogger()
         tool_logger.start_live_display()
 
         # Create run config with tracing disabled
         run_config = RunConfig(
-            tracing_disabled=True,  # Disable tracing
+            tracing_disabled=False,  
         )
 
         # Main workflow
@@ -507,7 +566,7 @@ async def main():
                 # Run screenshot taker with error handling and disabled tracing
                 console.print("\n[bold green]Screenshot Taker:[/bold green] Capturing screenshots...")
                 screenshot_result = await Runner.run(
-                    screenshot_taker,
+                    screenshot_taker_instance,
                     input_items,
                     run_config=run_config,
                     max_turns=30
@@ -523,7 +582,7 @@ async def main():
                 # Run coverage evaluator with disabled tracing
                 console.print("\n[bold green]Evaluator:[/bold green] Analyzing coverage...")
                 evaluator_result = await Runner.run(
-                    coverage_evaluator,
+                    coverage_evaluator_instance,
                     input_items,
                     run_config=run_config,
                     max_turns=20
