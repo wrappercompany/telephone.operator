@@ -9,13 +9,17 @@
 #   "appium-python-client>=3.1.1",
 #   "rich>=13.0.0,<14.0.0",
 #   "python-dotenv>=1.0.0",
+#   "requests>=2.31.0",
 # ]
 # ///
 
 import asyncio
 import os
+import requests
+import subprocess
+import time
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime
 from pathlib import Path
 from agents import Agent, Runner, function_tool
@@ -348,6 +352,47 @@ ios_agent = Agent(
 # Wrap all tools with logging after agent creation
 ios_agent.tools = [wrap_tool_with_logging(tool) for tool in ios_agent.tools]
 
+def start_appium_server() -> Tuple[bool, str]:
+    """Start the Appium server if it's not running."""
+    try:
+        # First check if it's already running
+        if check_appium_server()[0]:
+            return True, "Appium server is already running"
+        
+        # Start Appium server in the background
+        console.print("[yellow]Starting Appium server...[/yellow]")
+        subprocess.Popen(
+            ["appium", "--address", "127.0.0.1", "--port", "4723"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        # Wait for server to start (max 10 seconds)
+        for _ in range(10):
+            if check_appium_server()[0]:
+                return True, "Successfully started Appium server"
+            time.sleep(1)
+            
+        return False, "Failed to start Appium server after 10 seconds"
+    except FileNotFoundError:
+        return False, "Appium is not installed. Please install it with: npm install -g appium"
+    except Exception as e:
+        return False, f"Error starting Appium server: {str(e)}"
+
+def check_appium_server() -> Tuple[bool, str]:
+    """Check if Appium server is running and accessible."""
+    try:
+        response = requests.get('http://127.0.0.1:4723/status', timeout=2)
+        if response.status_code == 200:
+            return True, "Appium server is running"
+        return False, f"Appium server returned status code: {response.status_code}"
+    except requests.exceptions.ConnectionError:
+        return False, "Appium server is not running"
+    except requests.exceptions.Timeout:
+        return False, "Appium server connection timed out"
+    except Exception as e:
+        return False, f"Error checking Appium server: {str(e)}"
+
 async def main():
     # Load environment variables from .env file
     load_dotenv()
@@ -358,6 +403,18 @@ async def main():
         console.print("[yellow]Please create a .env file in the project root with your OpenAI API key:[/yellow]")
         console.print("OPENAI_API_KEY=your_api_key_here")
         return
+
+    # Check and start Appium server if needed
+    server_running, status_message = check_appium_server()
+    if not server_running:
+        console.print("[yellow]Appium server is not running. Attempting to start it...[/yellow]")
+        server_started, start_message = start_appium_server()
+        if not server_started:
+            console.print(f"[red]Error: {start_message}[/red]")
+            return
+        console.print(f"[green]{start_message}[/green]")
+    else:
+        console.print(f"[green]{status_message}[/green]")
     
     try:
         with console.status("[bold blue]Running iOS automation...[/bold blue]"):
