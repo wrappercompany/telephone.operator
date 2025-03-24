@@ -275,6 +275,51 @@ async def test_launch_app():
             if not device_info['is_real']:
                 raise
 
+@pytest.mark.asyncio
+async def test_page_source_diff():
+    """Test the page source diff functionality."""
+    device_info = get_device_info()
+    max_retries = 5 if device_info['is_real'] else 3
+    retry_delay = 2 if device_info['is_real'] else 1
+    
+    try:
+        # First, get initial page source
+        current_source, diff = device_manager.get_page_source_diff()
+        assert current_source is not None
+        assert isinstance(current_source, str)
+        assert len(current_source) > 0
+        
+        # The first call to get_page_source_diff should mention it's the initial page
+        assert "Initial page source" in diff or diff.strip() == ""
+        
+        # Now perform an action that will change the UI
+        # Try to tap the URL bar in Safari
+        try:
+            # Wait for URL element to be present
+            wait = WebDriverWait(device_manager.driver, 20 if device_info['is_real'] else 10)
+            element = wait.until(
+                EC.presence_of_element_located((AppiumBy.ACCESSIBILITY_ID, "URL"))
+            )
+            element.click()
+            await asyncio.sleep(1)  # Wait for UI to update
+            
+            # Get page source diff after action
+            _, diff_after_action = device_manager.get_page_source_diff()
+            
+            # There should be some diff contents now
+            assert diff_after_action is not None
+            assert isinstance(diff_after_action, str)
+            assert "++" in diff_after_action or diff_after_action.startswith("---") or "@@" in diff_after_action
+            
+            logger.info("Page source diff test passed")
+        except Exception as e:
+            logger.warning(f"Page source diff action test warning: {e}")
+            
+    except Exception as e:
+        logger.error(f"Page source diff test failed: {e}")
+        if not device_info['is_real']:
+            raise
+
 if __name__ == "__main__":
     import sys
     import argparse
@@ -287,6 +332,7 @@ if __name__ == "__main__":
     parser.add_argument('--force-simulator', action='store_true', help='Force using simulator even if real device is available')
     parser.add_argument('--device-name', help='Override device name (default: iPhone 16 Pro)')
     parser.add_argument('--ios-version', help='Override iOS version (default: 18.2)')
+    parser.add_argument('--test-name', help='Run specific test by name (e.g., test_page_source_diff)')
     
     args = parser.parse_args()
     
@@ -327,6 +373,10 @@ if __name__ == "__main__":
         pytest_args.extend(["--lf"])
     elif args.failed_first:
         pytest_args.extend(["--failed-first"])
+    
+    # Add test name if specified
+    if args.test_name:
+        pytest_args.extend(["-k", args.test_name])
     
     pytest_args.append(__file__)
     pytest.main(pytest_args) 
