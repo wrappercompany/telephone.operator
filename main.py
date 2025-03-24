@@ -173,6 +173,7 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
 async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) -> str:
     """
     Tap an element by its identifier.
+    Only taps elements that are visible on screen.
     
     Args:
         element_id: The identifier of the element to tap
@@ -192,8 +193,15 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         
         by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
         element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
+        
+        # Check if element is visible
+        if not element.is_displayed():
+            error_msg = f"Element with {by_strategy}: {element_id} is not visible"
+            console.print(f"[yellow]{error_msg}[/yellow]")
+            return error_msg
+            
         element.click()
-        success_msg = f"Successfully tapped element with {by_strategy}: {element_id}"
+        success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
         console.print(f"[green]{success_msg}[/green]")
         return success_msg
     except Exception as e:
