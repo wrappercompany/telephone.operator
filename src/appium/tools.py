@@ -85,13 +85,14 @@ def xml_diff(old_xml: str, new_xml: str) -> str:
     return '\n'.join(formatted_lines)
 
 @function_tool
-async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Optional[bool] = None) -> str:
+async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Optional[bool] = None, clean_output: Optional[bool] = None) -> str:
     """
     Get the current page source of the application.
     
     Args:
         diff_only: If True, returns only the diff from the previous page source
         format_output: If True, formats the XML for better readability
+        clean_output: If None or True, returns a cleaned version of the XML containing only visible elements. Set to False for raw XML.
     """
     global previous_page_source
     
@@ -107,6 +108,56 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
             error_msg = "Page source is empty"
             logger.warning(error_msg)
             return error_msg
+        
+        # Clean the XML if requested (default behavior)
+        if clean_output is not False:  # None or True
+            try:
+                from lxml import etree
+                import re
+                
+                # Parse the XML
+                parser = etree.XMLParser(remove_blank_text=True)
+                tree = etree.fromstring(page_source.encode(), parser)
+                
+                # Essential attributes for navigation
+                essential_attrs = {'name', 'label', 'value', 'type', 'enabled', 'accessible'}
+                
+                def is_visible_and_enabled(elem: etree._Element) -> bool:
+                    """Check if element is visible and enabled."""
+                    return (
+                        elem.get('visible', '').lower() == 'true' and 
+                        elem.get('enabled', '').lower() == 'true'
+                    )
+                
+                # Remove invisible elements and their children
+                for elem in tree.xpath('//*[not(@visible="true") or not(@enabled="true")]'):
+                    parent = elem.getparent()
+                    if parent is not None:
+                        parent.remove(elem)
+                
+                # Clean up remaining visible elements
+                for elem in tree.iter():
+                    # Keep only essential attributes
+                    for attr in list(elem.attrib.keys()):
+                        if attr not in essential_attrs:
+                            del elem.attrib[attr]
+                    
+                    # Remove empty attributes
+                    for attr in list(elem.attrib.keys()):
+                        if not elem.attrib[attr]:
+                            del elem.attrib[attr]
+                
+                # Convert back to string with pretty printing
+                page_source = etree.tostring(tree, pretty_print=True, encoding='unicode')
+                
+                # Remove empty lines
+                page_source = re.sub(r'\n\s*\n', '\n', page_source)
+                
+            except ImportError:
+                logger.warning("lxml not installed, returning unclean XML")
+            except Exception as e:
+                logger.warning(f"Failed to clean XML: {str(e)}")
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
         
         # Handle diffing if requested
         if diff_only and previous_page_source:
