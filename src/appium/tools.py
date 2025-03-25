@@ -169,24 +169,62 @@ def get_clean_page_source() -> Optional[str]:
                 'name', 'label', 'value', 'type', 'enabled', 'index', 'text'
             }
             
-            def should_keep_element(elem: etree._Element) -> bool:
-                """Check if element should be kept in the output."""
-                # Keep all elements with any identifier or structural importance
-                # We're being less restrictive now - any element with type or useful attributes
-                has_type = elem.get('type') is not None
-                # Either has some identifier or has child elements
-                has_content = (
-                    elem.get('name') is not None or 
-                    elem.get('label') is not None or 
-                    elem.get('value') is not None or
-                    len(elem) > 0  # Has children
-                )
-                # Keep all elements that have a type and either have content or are root/near-root
-                return has_type and (has_content or elem.getparent() is None or elem.getparent().getparent() is None)
+            def has_important_attributes(elem: etree._Element) -> bool:
+                """Check if element has important attributes like name or label."""
+                return (elem.get('name') is not None or 
+                       elem.get('label') is not None or 
+                       elem.get('value') is not None)
             
-            # Clean up elements without removing too many
+            def has_important_descendants(elem: etree._Element) -> bool:
+                """Check if any descendant has a name or label."""
+                return any(has_important_attributes(descendant) for descendant in elem.xpath('.//*'))
+            
+            def should_keep_element(elem: etree._Element) -> bool:
+                """
+                Determine if an element should be kept in the cleaned XML.
+                Keep elements that have a name/label or have descendants with names/labels.
+                Always keep root and structural elements.
+                """
+                # Always keep root and near-root elements
+                if elem.getparent() is None or elem.getparent().getparent() is None:
+                    return True
+                
+                # Keep if it has important attributes
+                if has_important_attributes(elem):
+                    return True
+                
+                # Keep if it has type and children with important attributes
+                if elem.get('type') is not None and (len(elem) > 0 and has_important_descendants(elem)):
+                    return True
+                
+                # Otherwise don't keep
+                return False
+            
+            # First pass: identify elements to remove
+            elements_to_remove = []
             for elem in tree.xpath('//*'):
-                # Remove non-essential attributes to keep the XML cleaner
+                if not should_keep_element(elem):
+                    elements_to_remove.append(elem)
+            
+            # Second pass: remove identified elements but preserve their children
+            for elem in elements_to_remove:
+                parent = elem.getparent()
+                if parent is not None:  # Skip root element
+                    # Get the index of the element to remove
+                    idx = parent.index(elem)
+                    
+                    # Add all children to the parent at the same position
+                    for i, child in enumerate(list(elem)):
+                        # Remove the child from original parent first
+                        elem.remove(child)
+                        # Insert at the correct position in the grandparent
+                        parent.insert(idx + i, child)
+                    
+                    # Now remove the empty element
+                    parent.remove(elem)
+            
+            # Clean up remaining elements - remove non-essential attributes
+            for elem in tree.xpath('//*'):
                 for attr in list(elem.attrib.keys()):
                     if attr not in essential_attrs:
                         del elem.attrib[attr]
