@@ -7,12 +7,16 @@ from datetime import datetime
 from pathlib import Path
 import logging
 import traceback
+import difflib
 from typing import Optional, Dict, Any, Tuple
 from .driver import ios_driver
 from .enums import AppiumStatus, AppAction
 from ..ui.console import console, Panel, print_error, print_warning, print_success
 
 logger = logging.getLogger(__name__)
+
+# Store the previous page source for diffing
+previous_page_source = None
 
 class LocatorStrategy(str, Enum):
     ACCESSIBILITY_ID = "accessibility_id"
@@ -41,6 +45,45 @@ def check_driver_connection() -> Tuple[bool, str]:
         return False, error_msg
     return True, "Driver connected"
 
+def xml_diff(old_xml: str, new_xml: str) -> str:
+    """Generate a diff between two XML strings with color formatting."""
+    if not old_xml:
+        return new_xml
+    
+    old_lines = old_xml.splitlines()
+    new_lines = new_xml.splitlines()
+    
+    diff_lines = list(difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile='before',
+        tofile='after',
+        lineterm=''
+    ))
+    
+    # Add Rich color formatting
+    formatted_lines = []
+    for line in diff_lines:
+        if line.startswith('+'):
+            if not (line.startswith('+++') and line.startswith('+++ after')):
+                # Green for additions
+                formatted_lines.append(f"[bold green]{line}[/bold green]")
+            else:
+                formatted_lines.append(line)
+        elif line.startswith('-'):
+            if not (line.startswith('---') and line.startswith('--- before')):
+                # Red for removals
+                formatted_lines.append(f"[bold red]{line}[/bold red]")
+            else:
+                formatted_lines.append(line)
+        elif line.startswith('@@'):
+            # Cyan for line info
+            formatted_lines.append(f"[cyan]{line}[/cyan]")
+        else:
+            formatted_lines.append(line)
+    
+    return '\n'.join(formatted_lines)
+
 @function_tool
 async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Optional[bool] = None) -> str:
     """
@@ -50,6 +93,8 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
         diff_only: If True, returns only the diff from the previous page source
         format_output: If True, formats the XML for better readability
     """
+    global previous_page_source
+    
     logger.info("Tool called: get_page_source")
     driver_status, message = check_driver_connection()
     if not driver_status:
@@ -62,12 +107,25 @@ async def get_page_source(*, diff_only: Optional[bool] = None, format_output: Op
             error_msg = "Page source is empty"
             logger.warning(error_msg)
             return error_msg
+        
+        # Handle diffing if requested
+        if diff_only and previous_page_source:
+            diff = xml_diff(previous_page_source, page_source)
+            if format_output:
+                console.print(Panel(diff, title="XML Diff", border_style="green", expand=False))
             
-        if format_output:
-            console.print(Panel(page_source, title="Page Source", border_style="blue"))
+            # Update the previous page source
+            previous_page_source = page_source
+            return diff
+        else:
+            # Store current page source for future diffs
+            previous_page_source = page_source
             
-        logger.info("Page source retrieved successfully")
-        return page_source
+            if format_output:
+                console.print(Panel(page_source, title="Page Source", border_style="blue", expand=False))
+            
+            logger.info("Page source retrieved successfully")
+            return page_source
     except Exception as e:
         error_msg = f"Failed to get page source: {str(e)}"
         logger.error(error_msg)
@@ -85,6 +143,8 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         element_id: The identifier of the element to tap
         by: The locator strategy to use
     """
+    global previous_page_source
+    
     logger.info(f"Tool called: tap_element with id={element_id}, by={by}")
     driver_status, message = check_driver_connection()
     if not driver_status:
@@ -97,6 +157,9 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         return error_msg
     
     try:
+        # Get page source before interaction
+        before_source = ios_driver.driver.page_source
+        
         locator_map = {
             LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
             LocatorStrategy.XPATH: AppiumBy.XPATH,
@@ -123,9 +186,22 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
             return warning_msg
             
         element.click()
-        success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
-        logger.info(success_msg)
-        print_success(success_msg)
+        
+        # Get page source after interaction
+        after_source = ios_driver.driver.page_source
+        
+        # Generate XML diff
+        diff = xml_diff(before_source, after_source)
+        
+        # Update the previous page source
+        previous_page_source = after_source
+        
+        # Display formatted diff in console
+        console.print(Panel(diff, title=f"XML Diff - Tapped {element_id}", border_style="green", expand=False))
+        
+        success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}\n\nXML Diff:\n{diff}"
+        logger.info(f"Successfully tapped visible element with {by_strategy}: {element_id}")
+        print_success(f"Successfully tapped visible element with {by_strategy}: {element_id}")
         return success_msg
     except Exception as e:
         error_msg = f"Failed to tap element: {str(e)}"
@@ -142,12 +218,30 @@ async def press_physical_button(button: PhysicalButton) -> str:
     Args:
         button: The button to press
     """
+    global previous_page_source
+    
     if not ios_driver.driver:
         return "No active Appium session"
     
     try:
+        # Get page source before interaction
+        before_source = ios_driver.driver.page_source
+        
         ios_driver.driver.execute_script('mobile: pressButton', {'name': button.value})
-        return f"Successfully pressed {button.name} button"
+        
+        # Get page source after interaction
+        after_source = ios_driver.driver.page_source
+        
+        # Generate XML diff
+        diff = xml_diff(before_source, after_source)
+        
+        # Update the previous page source
+        previous_page_source = after_source
+        
+        # Display formatted diff in console
+        console.print(Panel(diff, title=f"XML Diff - Pressed {button.name} button", border_style="green", expand=False))
+        
+        return f"Successfully pressed {button.name} button\n\nXML Diff:\n{diff}"
     except Exception as e:
         return f"Failed to press button: {str(e)}"
 
@@ -159,10 +253,15 @@ async def swipe(direction: SwipeDirection) -> str:
     Args:
         direction: The direction to swipe
     """
+    global previous_page_source
+    
     if not ios_driver.driver:
         return "No active Appium session"
     
     try:
+        # Get page source before interaction
+        before_source = ios_driver.driver.page_source
+        
         window_size = ios_driver.driver.get_window_size()
         width = window_size['width']
         height = window_size['height']
@@ -176,7 +275,20 @@ async def swipe(direction: SwipeDirection) -> str:
         
         start_x, start_y, end_x, end_y = swipe_params[direction]
         ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
-        return f"Successfully performed {direction.value} swipe"
+        
+        # Get page source after interaction
+        after_source = ios_driver.driver.page_source
+        
+        # Generate XML diff
+        diff = xml_diff(before_source, after_source)
+        
+        # Update the previous page source
+        previous_page_source = after_source
+        
+        # Display formatted diff in console
+        console.print(Panel(diff, title=f"XML Diff - Swiped {direction.value}", border_style="green", expand=False))
+        
+        return f"Successfully performed {direction.value} swipe\n\nXML Diff:\n{diff}"
     except Exception as e:
         return f"Failed to perform swipe: {str(e)}"
 
@@ -190,10 +302,15 @@ async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy
         text: The text to send
         by: The locator strategy to use
     """
+    global previous_page_source
+    
     if not ios_driver.driver:
         return "No active Appium session"
     
     try:
+        # Get page source before interaction
+        before_source = ios_driver.driver.page_source
+        
         locator_map = {
             LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
             LocatorStrategy.XPATH: AppiumBy.XPATH,
@@ -205,7 +322,20 @@ async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy
         element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
         element.clear()
         element.send_keys(text)
-        return f"Successfully sent input '{text}' to element with {by_strategy}: {element_id}"
+        
+        # Get page source after interaction
+        after_source = ios_driver.driver.page_source
+        
+        # Generate XML diff
+        diff = xml_diff(before_source, after_source)
+        
+        # Update the previous page source
+        previous_page_source = after_source
+        
+        # Display formatted diff in console
+        console.print(Panel(diff, title=f"XML Diff - Input '{text}' to {element_id}", border_style="green", expand=False))
+        
+        return f"Successfully sent input '{text}' to element with {by_strategy}: {element_id}\n\nXML Diff:\n{diff}"
     except Exception as e:
         return f"Failed to send input: {str(e)}"
 
@@ -217,12 +347,30 @@ async def navigate_to(url: str) -> str:
     Args:
         url: The URL to navigate to
     """
+    global previous_page_source
+    
     if not ios_driver.driver:
         return "No active Appium session"
     
     try:
+        # Get page source before interaction
+        before_source = ios_driver.driver.page_source
+        
         ios_driver.driver.get(url)
-        return f"Successfully navigated to {url}"
+        
+        # Get page source after interaction
+        after_source = ios_driver.driver.page_source
+        
+        # Generate XML diff
+        diff = xml_diff(before_source, after_source)
+        
+        # Update the previous page source
+        previous_page_source = after_source
+        
+        # Display formatted diff in console
+        console.print(Panel(diff, title=f"XML Diff - Navigated to {url}", border_style="green", expand=False))
+        
+        return f"Successfully navigated to {url}\n\nXML Diff:\n{diff}"
     except Exception as e:
         return f"Failed to navigate: {str(e)}"
 
@@ -234,6 +382,8 @@ async def launch_app(bundle_id: str) -> str:
     Args:
         bundle_id: The bundle ID of the app to launch
     """
+    global previous_page_source
+    
     logger.info(f"Tool called: launch_app with bundle_id={bundle_id}")
     
     if not bundle_id:
@@ -249,9 +399,19 @@ async def launch_app(bundle_id: str) -> str:
             try:
                 ios_driver.driver.terminate_app(bundle_id)
                 ios_driver.driver.activate_app(bundle_id)
-                success_msg = f"Successfully relaunched app with bundle ID: {bundle_id}"
-                logger.info(success_msg)
-                print_success(success_msg)
+                
+                # Get page source after interaction
+                after_source = ios_driver.driver.page_source
+                
+                # Update the previous page source
+                previous_page_source = after_source
+                
+                # Display initial XML in console
+                console.print(Panel(after_source, title=f"Initial XML - App {bundle_id} Relaunched", border_style="blue", expand=False))
+                
+                success_msg = f"Successfully relaunched app with bundle ID: {bundle_id}\n\nInitial XML:\n{after_source}"
+                logger.info(f"Successfully relaunched app with bundle ID: {bundle_id}")
+                print_success(f"Successfully relaunched app with bundle ID: {bundle_id}")
                 return success_msg
             except Exception as e:
                 logger.warning(f"Failed to relaunch app via existing driver: {str(e)}")
@@ -264,9 +424,18 @@ async def launch_app(bundle_id: str) -> str:
         result = ios_driver.init_driver(bundle_id)
         
         if result:
-            success_msg = f"Successfully launched app with bundle ID: {bundle_id}"
-            logger.info(success_msg)
-            print_success(success_msg)
+            # Get page source after launching
+            after_source = ios_driver.driver.page_source
+            
+            # Update the previous page source
+            previous_page_source = after_source
+            
+            # Display initial XML in console
+            console.print(Panel(after_source, title=f"Initial XML - App {bundle_id} Launched", border_style="blue", expand=False))
+            
+            success_msg = f"Successfully launched app with bundle ID: {bundle_id}\n\nInitial XML:\n{after_source}"
+            logger.info(f"Successfully launched app with bundle ID: {bundle_id}")
+            print_success(f"Successfully launched app with bundle ID: {bundle_id}")
             return success_msg
         else:
             error_msg = f"Failed to initialize driver for app: {bundle_id}"
