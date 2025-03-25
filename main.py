@@ -6,8 +6,8 @@ from src.manager import ScreenshotManager
 async def main() -> None:
     # Configure target app
     target_app = {
-        "name": "Messages",  # Human readable name
-        "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
+        "name": "Contacts",  # Human readable name
+        "bundle_id": "com.apple.MobileAddressBook"  # Bundle ID for launching
     }
 
     # Run the screenshot manager

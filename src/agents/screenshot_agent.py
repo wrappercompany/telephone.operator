@@ -143,7 +143,14 @@ Key Responsibilities:
    - Captured after animations complete
    - In correct device orientation
 
-Remember: Be thorough and systematic in your exploration. After each set of actions, describe what you've captured and what you plan to explore next.""",
+4. Natural Interactions
+   - Interact with the app EXACTLY like a real human user would
+   - Create realistic usage scenarios that reflect actual user behavior
+   - Enter plausible, realistic data (not test123, user1, etc.)
+   - Follow natural navigation patterns a typical user would take
+   - Complete workflows fully as a real user would (don't leave forms half-filled)
+
+Remember: Your goal is to produce screenshots that look like they came from genuine user sessions, not automated testing. After each set of actions, describe what you've captured and what you plan to explore next.""",
     tools=[
         get_page_source,
         tap_element,
