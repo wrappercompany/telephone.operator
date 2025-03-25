@@ -90,7 +90,20 @@ class ScreenshotManager:
 
                 try:
                     # Run screenshot capture with streaming
-                    screenshot_result = await self._capture_screenshots_streamed(input_items, run_config)
+                    # For the first iteration, include the initial message to launch the app
+                    # For subsequent iterations, don't include app launch instructions to preserve state
+                    iteration_input_items = input_items
+                    if iteration_count == 1:
+                        # First iteration - use the original input with app launch instruction
+                        pass
+                    else:
+                        # For later iterations, modify input to avoid reopening the app
+                        # Get latest feedback only, without the initial app launch message
+                        feedback_items = [item for item in input_items if "Please launch" not in item.get("content", "")]
+                        if feedback_items:
+                            iteration_input_items = feedback_items
+                    
+                    screenshot_result = await self._capture_screenshots_streamed(iteration_input_items, run_config)
                     if not screenshot_result:
                         logger.error("No screenshot result returned, aborting")
                         print_error("Screenshot capture failed, aborting")
@@ -135,7 +148,7 @@ class ScreenshotManager:
 
                     # Prepare feedback for next iteration
                     missing_areas = self._format_missing_areas(coverage_eval)
-                    feedback_msg = f"Coverage Feedback: {coverage_eval.feedback}\nPlease capture screenshots of: {missing_areas}"
+                    feedback_msg = f"Coverage Feedback: {coverage_eval.feedback}\nPlease capture screenshots of: {missing_areas}\nNote: Continue with the current app state, do not relaunch the app."
                     
                     logger.info(f"Coverage feedback: {missing_areas}")
                     input_items.append({
