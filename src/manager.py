@@ -15,6 +15,7 @@ import openai
 
 from .agents.screenshot_agent import screenshot_taker
 from .agents.coverage_agent import coverage_evaluator, create_default_evaluation
+from .agents.planner_agent import planner_agent, ScreenshotPlan
 from .ui.printer import Printer
 from .appium.driver import ios_driver
 from .ui.console import print_missing_api_key_instructions, CoverageEvaluation, print_error, print_warning
@@ -66,14 +67,88 @@ class ScreenshotManager:
                 logger.error(error_msg)
                 print_error(error_msg)
                 return
+                
+            # STEP 1: Create a plan using the planner agent
+            self.printer.update_item(
+                "planning",
+                "[bold blue]Creating screenshot plan...[/bold blue]",
+                hide_checkmark=True
+            )
+            
+            planning_input = f"Create a screenshot plan for {app_config['name']}, which is {app_config.get('description', 'an iOS app')}."
+            
+            try:
+                plan_result = await Runner.run(
+                    planner_agent,
+                    planning_input,
+                    run_config=RunConfig(tracing_disabled=False)
+                )
+                
+                screenshot_plan = plan_result.final_output
+                
+                self.printer.update_item(
+                    "planning",
+                    f"[bold green]Plan created with {len(screenshot_plan.app_sections)} sections and {len(screenshot_plan.user_flows)} flows[/bold green]",
+                    is_done=True
+                )
+                
+                # Format the plan for display
+                plan_sections = "\n   - " + "\n   - ".join(screenshot_plan.app_sections)
+                plan_states = "\n   - " + "\n   - ".join(screenshot_plan.required_states)
+                plan_flows = "\n   - " + "\n   - ".join(screenshot_plan.user_flows)
+                plan_criteria = "\n   - " + "\n   - ".join(screenshot_plan.success_criteria)
+                
+                self.printer.update_item(
+                    "plan_details",
+                    f"[bold cyan]Screenshot Plan:[/bold cyan]\n"
+                    f"[bold]App Sections:{plan_sections}[/bold]\n\n"
+                    f"[bold]Required States:{plan_states}[/bold]\n\n"
+                    f"[bold]User Flows:{plan_flows}[/bold]\n\n"
+                    f"[bold]Success Criteria:{plan_criteria}[/bold]",
+                    hide_checkmark=True
+                )
+                
+            except Exception as e:
+                error_msg = f"Error creating screenshot plan: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                self.printer.update_item(
+                    "planning",
+                    f"[bold red]Failed to create plan: {str(e)}[/bold red]",
+                    is_done=True
+                )
+                # Create a minimal default plan
+                screenshot_plan = ScreenshotPlan(
+                    app_sections=["App Main Screens", "Settings", "User Input Forms"],
+                    required_states=["Default State", "Filled State", "Error State"],
+                    user_flows=["App Launch and Navigation", "Basic Functionality"],
+                    success_criteria=["All main screens captured", "All primary functions documented"]
+                )
 
-            iteration_count = 0
-            max_iterations = 20
+            # Create initial input with the plan
             input_items = [{
-                "content": f"Please launch {app_config['name']} and start capturing screenshots systematically.",
+                "content": f"""Please launch {app_config['name']} and capture screenshots according to this plan:
+                
+APP SECTIONS: 
+{plan_sections}
+
+REQUIRED STATES:
+{plan_states}
+
+USER FLOWS:
+{plan_flows}
+
+SUCCESS CRITERIA:
+{plan_criteria}
+
+Start by launching the app and systematically work through each section.""",
                 "role": "user"
             }]
 
+            # STEP 2: Execute the iterative screenshot process
+            iteration_count = 0
+            max_iterations = 20
+            
             # Create run config
             run_config = RunConfig(
                 tracing_disabled=False
@@ -132,7 +207,7 @@ class ScreenshotManager:
                         logger.info("Screenshot coverage is complete")
                         self.printer.update_item(
                             "complete",
-                            "[bold green]Screenshot coverage is complete[/bold green]",
+                            f"[bold green]Screenshot coverage is complete ({coverage_eval.completion_percentage:.1f}%)[/bold green]",
                             is_done=True
                         )
                         break
@@ -141,16 +216,26 @@ class ScreenshotManager:
                         logger.info("Maximum iterations reached")
                         self.printer.update_item(
                             "max_iterations",
-                            "[bold yellow]Maximum iterations reached[/bold yellow]",
+                            f"[bold yellow]Maximum iterations reached ({coverage_eval.completion_percentage:.1f}% complete)[/bold yellow]",
                             is_done=True
                         )
                         break
 
-                    # Prepare feedback for next iteration
-                    missing_areas = self._format_missing_areas(coverage_eval)
-                    feedback_msg = f"Coverage Feedback: {coverage_eval.feedback}\nPlease capture screenshots of: {missing_areas}\nNote: Continue with the current app state, do not relaunch the app."
+                    # Prepare feedback for next iteration based on the plan
+                    if coverage_eval.remaining_sections:
+                        next_section = coverage_eval.remaining_sections[0]
+                        next_flow = coverage_eval.remaining_flows[0] if coverage_eval.remaining_flows else None
+                        
+                        if next_flow:
+                            feedback_msg = f"Coverage Progress: {coverage_eval.completion_percentage:.1f}%\n\nFeedback: {coverage_eval.feedback}\n\nPlease focus on capturing '{next_section}' section, specifically following this flow: {next_flow}\n\nNote: Continue with the current app state, do not relaunch the app."
+                        else:
+                            feedback_msg = f"Coverage Progress: {coverage_eval.completion_percentage:.1f}%\n\nFeedback: {coverage_eval.feedback}\n\nPlease focus on capturing '{next_section}' section.\n\nNote: Continue with the current app state, do not relaunch the app."
+                    else:
+                        # Fall back to existing feedback mechanism
+                        missing_areas = self._format_missing_areas(coverage_eval)
+                        feedback_msg = f"Coverage Progress: {coverage_eval.completion_percentage:.1f}%\n\nFeedback: {coverage_eval.feedback}\n\nPlease capture screenshots of: {missing_areas}\n\nNote: Continue with the current app state, do not relaunch the app."
                     
-                    logger.info(f"Coverage feedback: {missing_areas}")
+                    logger.info(f"Coverage feedback: {feedback_msg[:100]}...")
                     input_items.append({
                         "content": feedback_msg,
                         "role": "user"

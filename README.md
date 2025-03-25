@@ -1,76 +1,92 @@
 # Telephone Operator
 
-An automated iOS app testing and screenshot capture tool powered by OpenAI's GPT models.
+An iOS screenshot automation tool that systematically captures all screens of an app using OpenAI's Agents API.
 
-## Features
+## Overview
 
-- Automated screenshot capture of iOS apps
-- Intelligent coverage analysis
-- Progress tracking and reporting
-- OpenAI GPT-powered automation
+Telephone Operator uses a goal-based approach to screenshot capture. Given an app, it:
 
-## Prerequisites
+1. Creates a comprehensive screenshot plan
+2. Systematically captures all screens
+3. Evaluates progress against the plan
+4. Continues until all screens are captured
+
+## How It Works
+
+The system uses a three-agent architecture:
+
+1. **Planner Agent**: Analyzes the app and creates a structured plan breaking down:
+   - App sections to cover
+   - Required states to capture
+   - User flows to follow
+   - Success criteria
+
+2. **Screenshot Agent**: Interacts with the iOS app to:
+   - Navigate through screens
+   - Trigger different states
+   - Follow user flows
+   - Capture screenshots
+
+3. **Coverage Evaluator**: Tracks progress against the plan:
+   - Identifies completed sections and flows
+   - Determines what remains to be captured
+   - Calculates completion percentage
+   - Provides focused feedback
+
+The Manager orchestrates these agents through an iterative process until complete coverage is achieved.
+
+## Getting Started
+
+### Prerequisites
 
 - Python 3.9+
-- Node.js and npm (for Appium)
-- Appium (`npm install -g appium`)
-- XCode and iOS Simulator
+- Appium server
+- iOS device or simulator
 - OpenAI API key
 
-## Installation
+### Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/telephone-operator.git
-cd telephone-operator
+1. Clone the repository
+```
+git clone https://github.com/yourusername/telephone.operator.git
+cd telephone.operator
 ```
 
-2. Install dependencies using uv:
-```bash
-uv pip install -r requirements.txt
+2. Create and activate a virtual environment
+```
+uv venv
+source .venv/bin/activate
 ```
 
-3. Set up your environment variables:
-```bash
+3. Install dependencies
+```
+uv pip install -e .
+```
+
+4. Set up your environment variables
+```
 cp .env.example .env
-# Edit .env and add your OpenAI API key
+# Edit .env to add your OpenAI API key
 ```
 
-## Usage
+### Usage
 
-1. Start the iOS Simulator with your desired device
+1. Start the Appium server
 
-2. Run the screenshot capture:
-```bash
-python main.py
+2. Configure your target app in `main.py`
+```python
+target_app = {
+    "name": "YourAppName",
+    "bundle_id": "com.example.appbundleid",
+    "description": "A detailed description of your app's functionality"
+}
 ```
 
-The tool will:
-- Launch the specified iOS app
-- Systematically capture screenshots of all screens and states
-- Analyze coverage and provide feedback
-- Continue until complete coverage is achieved
-
-## Project Structure
-
+3. Run the app
 ```
-telephone-operator/
-├── src/
-│   ├── agents/
-│   │   ├── screenshot_agent.py
-│   │   └── coverage_agent.py
-│   ├── appium/
-│   │   ├── driver.py
-│   │   └── tools.py
-│   └── ui/
-│       ├── console.py
-│       └── printer.py
-├── tests/
-├── main.py
-├── pyproject.toml
-└── requirements.txt
+uv run main.py
 ```
 
 ## License
 
-MIT 
+[Your license information] 

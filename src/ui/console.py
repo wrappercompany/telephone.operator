@@ -39,6 +39,12 @@ class CoverageEvaluation:
     score: str  # "complete" or "incomplete"
     feedback: str
     missing_areas: List[str]
+    # Enhanced fields for tracking progress against plan
+    completed_sections: List[str] = None
+    completed_flows: List[str] = None
+    remaining_sections: List[str] = None
+    remaining_flows: List[str] = None
+    completion_percentage: float = 0.0
     
     def __post_init__(self):
         """Validate the evaluation data."""
@@ -61,6 +67,32 @@ class CoverageEvaluation:
             if self.score == "incomplete" and not self.missing_areas:
                 logger.warning("Score is incomplete but missing_areas is empty. Adding default.")
                 self.missing_areas = ["different app screens", "various UI states"]
+                
+            # Initialize enhanced fields if they're None
+            if self.completed_sections is None:
+                self.completed_sections = []
+            if self.completed_flows is None:
+                self.completed_flows = []
+            if self.remaining_sections is None:
+                self.remaining_sections = []
+            if self.remaining_flows is None:
+                self.remaining_flows = []
+                
+            # Ensure all enhanced fields are lists
+            if not isinstance(self.completed_sections, list):
+                self.completed_sections = [str(self.completed_sections)] if self.completed_sections else []
+            if not isinstance(self.completed_flows, list):
+                self.completed_flows = [str(self.completed_flows)] if self.completed_flows else []
+            if not isinstance(self.remaining_sections, list):
+                self.remaining_sections = [str(self.remaining_sections)] if self.remaining_sections else []
+            if not isinstance(self.remaining_flows, list):
+                self.remaining_flows = [str(self.remaining_flows)] if self.remaining_flows else []
+                
+            # Validate completion_percentage is between 0 and 100
+            if not isinstance(self.completion_percentage, (int, float)):
+                logger.warning(f"completion_percentage is not a number: {type(self.completion_percentage)}. Setting to 0.")
+                self.completion_percentage = 0.0
+            self.completion_percentage = max(0.0, min(100.0, float(self.completion_percentage)))
         except Exception as e:
             logger.error(f"Error in CoverageEvaluation.__post_init__: {str(e)}")
             logger.debug(f"Stack trace: {traceback.format_exc()}")
@@ -71,6 +103,16 @@ class CoverageEvaluation:
                 self.feedback = "Continue capturing screenshots."
             if not hasattr(self, 'missing_areas') or not self.missing_areas:
                 self.missing_areas = ["app screens"]
+            if not hasattr(self, 'completed_sections') or not self.completed_sections:
+                self.completed_sections = []
+            if not hasattr(self, 'completed_flows') or not self.completed_flows:
+                self.completed_flows = []
+            if not hasattr(self, 'remaining_sections') or not self.remaining_sections:
+                self.remaining_sections = ["all sections"]
+            if not hasattr(self, 'remaining_flows') or not self.remaining_flows:
+                self.remaining_flows = ["all flows"]
+            if not hasattr(self, 'completion_percentage'):
+                self.completion_percentage = 0.0
 
 def print_iteration_progress(current: int, total: int):
     """Print the current iteration progress."""
@@ -119,7 +161,23 @@ def print_coverage_analysis(result: Optional[CoverageEvaluation]):
         # Format missing areas with proper handling for empty list
         missing_areas_text = ", ".join(result.missing_areas) if result.missing_areas else "None specified"
         
-        content = f"Status: {result.score}\nFeedback: {result.feedback}\nMissing Areas: {missing_areas_text}"
+        # Format enhanced fields
+        completed_sections_text = ", ".join(result.completed_sections) if hasattr(result, 'completed_sections') and result.completed_sections else "None"
+        completed_flows_text = ", ".join(result.completed_flows) if hasattr(result, 'completed_flows') and result.completed_flows else "None"
+        remaining_sections_text = ", ".join(result.remaining_sections) if hasattr(result, 'remaining_sections') and result.remaining_sections else "None"
+        remaining_flows_text = ", ".join(result.remaining_flows) if hasattr(result, 'remaining_flows') and result.remaining_flows else "None"
+        completion_percentage = f"{result.completion_percentage:.1f}%" if hasattr(result, 'completion_percentage') else "0%"
+        
+        content = (
+            f"Status: {result.score}\n"
+            f"Completion: {completion_percentage}\n"
+            f"Feedback: {result.feedback}\n\n"
+            f"Completed Sections: {completed_sections_text}\n"
+            f"Completed Flows: {completed_flows_text}\n"
+            f"Remaining Sections: {remaining_sections_text}\n"
+            f"Remaining Flows: {remaining_flows_text}\n"
+            f"Missing Areas: {missing_areas_text}"
+        )
         
         try:
             console.print(Panel(content, title=title, border_style=style))
@@ -127,7 +185,7 @@ def print_coverage_analysis(result: Optional[CoverageEvaluation]):
             logger.error(f"Failed to print panel: {str(e)}")
             print(f"\n{title}:\n{content}")
             
-        logger.info(f"Coverage analysis: score={result.score}, missing_areas={missing_areas_text}")
+        logger.info(f"Coverage analysis: score={result.score}, completion={completion_percentage}, missing_areas={missing_areas_text}")
     except Exception as e:
         logger.error(f"Error printing coverage analysis: {str(e)}")
         logger.debug(f"Stack trace: {traceback.format_exc()}")
