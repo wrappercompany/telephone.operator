@@ -10,3 +10,22 @@ NEVER USE EMOJIS
 - Use uv.lock and pyproject.toml for dependency management
 - Run Python scripts with: uv run [script-name]
 - Install Python versions with: uv python install [version]
+
+
+# Library Imports
+- Import from agents module directly: from agents import Agent, Runner, function_tool
+- For advanced usage: from agents import [specific components]
+- Use OpenAI API key via environment variables or set_default_openai_key()
+
+# Agent Development
+- Define agents with Agent class and provide name and instructions
+- Create function tools with @function_tool decorator
+- Use Pydantic models for structured data
+- Run agents with Runner.run() for async or Runner.run_sync() for sync execution
+- Set max_turns parameter when needed to limit execution loops
+
+# Code Style
+- Follow PEP 8 conventions
+- Use async/await for asynchronous code
+- Use typed parameters and return values
+- Keep agent instructions clear and concise
