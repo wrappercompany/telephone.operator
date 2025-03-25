@@ -134,10 +134,10 @@ def xml_diff(old_xml: str, new_xml: str) -> str:
 
 def get_clean_page_source() -> Optional[str]:
     """
-    Get and clean the current page source.
-    Returns formatted XML with essential elements and attributes preserved.
+    Get the current page source without any cleaning.
+    Returns raw XML directly from the driver.
     """
-    logger.debug("Getting and cleaning page source")
+    logger.debug("Getting page source (cleaning disabled)")
     
     driver_status, message = check_driver_connection()
     if not driver_status:
@@ -150,128 +150,10 @@ def get_clean_page_source() -> Optional[str]:
         if not page_source:
             logger.warning("Page source is empty")
             return None
-        
-        try:
-            from lxml import etree
-            import re
             
-            # Parse the XML
-            parser = etree.XMLParser(remove_blank_text=True)
-            try:
-                tree = etree.fromstring(page_source.encode(), parser)
-            except etree.XMLSyntaxError as xml_err:
-                logger.warning(f"XML parsing error: {str(xml_err)}")
-                # If there's an XML syntax error, return the raw page source
-                return page_source
-            
-            # Essential attributes to keep - expanded list
-            essential_attrs = {
-                'name', 'label', 'value', 'type', 'enabled', 'index', 'text'
-            }
-            
-            def has_important_attributes(elem: etree._Element) -> bool:
-                """Check if element has important attributes like name or label."""
-                return (elem.get('name') is not None or 
-                       elem.get('label') is not None or 
-                       elem.get('value') is not None)
-            
-            def has_important_descendants(elem: etree._Element) -> bool:
-                """Check if any descendant has a name or label."""
-                return any(has_important_attributes(descendant) for descendant in elem.xpath('.//*'))
-            
-            def should_keep_element(elem: etree._Element) -> bool:
-                """
-                Determine if an element should be kept in the cleaned XML.
-                Keep elements that have a name/label or have descendants with names/labels.
-                Always keep root and structural elements.
-                """
-                # Always keep root and near-root elements
-                if elem.getparent() is None or elem.getparent().getparent() is None:
-                    return True
-                
-                # Keep if it has important attributes
-                if has_important_attributes(elem):
-                    return True
-                
-                # Keep if it has type and children with important attributes
-                if elem.get('type') is not None and (len(elem) > 0 and has_important_descendants(elem)):
-                    return True
-                
-                # Otherwise don't keep
-                return False
-            
-            # First pass: identify elements to remove
-            elements_to_remove = []
-            for elem in tree.xpath('//*'):
-                if not should_keep_element(elem):
-                    elements_to_remove.append(elem)
-            
-            # Second pass: remove identified elements but preserve their children
-            for elem in elements_to_remove:
-                parent = elem.getparent()
-                if parent is not None:  # Skip root element
-                    # Get the index of the element to remove
-                    idx = parent.index(elem)
-                    
-                    # Add all children to the parent at the same position
-                    for i, child in enumerate(list(elem)):
-                        # Remove the child from original parent first
-                        elem.remove(child)
-                        # Insert at the correct position in the grandparent
-                        parent.insert(idx + i, child)
-                    
-                    # Now remove the empty element
-                    parent.remove(elem)
-            
-            # Clean up remaining elements - remove non-essential attributes
-            for elem in tree.xpath('//*'):
-                for attr in list(elem.attrib.keys()):
-                    if attr not in essential_attrs:
-                        del elem.attrib[attr]
-            
-            # Convert back to string with pretty printing
-            page_source = etree.tostring(tree, pretty_print=True, encoding='unicode')
-            
-            # Apply more readable formatting to the XML
-            # Remove empty lines
-            page_source = re.sub(r'\n\s*\n', '\n', page_source)
-            # Clean up spacing between elements
-            page_source = re.sub(r'>\s+<', '>\n<', page_source)
-            # Add proper indentation for nested elements
-            lines = page_source.splitlines()
-            indent_level = 0
-            formatted_lines = []
-            for line in lines:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                
-                # Adjust indent level based on XML structure
-                if stripped.startswith('</'):
-                    # Closing tag reduces indent level
-                    indent_level = max(0, indent_level - 1)
-                
-                # Add proper indentation
-                formatted_lines.append('  ' * indent_level + stripped)
-                
-                # Opening tag or self-closing tag
-                if stripped.endswith('>') and not stripped.endswith('/>') and not stripped.startswith('</'):
-                    # Check if this is not a self-closing tag
-                    if '</' not in stripped:
-                        indent_level += 1
-            
-            page_source = '\n'.join(formatted_lines)
-            
-            logger.debug("Page source cleaned and formatted successfully")
-            return page_source
-            
-        except ImportError:
-            logger.warning("lxml not installed, returning unclean XML")
-            return page_source
-        except Exception as e:
-            logger.warning(f"Failed to clean XML: {str(e)}")
-            logger.debug(f"Stack trace: {traceback.format_exc()}")
-            return page_source
+        # Simply return the raw page source
+        logger.debug("Returning raw page source (cleaning disabled)")
+        return page_source
     except Exception as e:
         logger.error(f"Error getting page source: {str(e)}")
         logger.debug(f"Stack trace: {traceback.format_exc()}")
@@ -355,7 +237,7 @@ async def with_page_source_diff(
 async def get_page_source() -> str:
     """
     Get the current page source of the application.
-    Always returns a cleaned, formatted XML with diffs from the previous state.
+    Returns the raw XML with diffs from the previous state.
     """
     global previous_page_source
     
@@ -366,10 +248,10 @@ async def get_page_source() -> str:
         return message
     
     try:
-        # Get cleaned page source using our helper function
+        # Get raw page source (cleaning disabled)
         page_source = get_clean_page_source()
         if not page_source:
-            error_msg = "Page source is empty or could not be cleaned"
+            error_msg = "Page source is empty or could not be retrieved"
             logger.warning(error_msg)
             return error_msg
         
@@ -761,10 +643,10 @@ async def take_screenshot() -> str:
         
         # Get and save page source
         logger.debug(f"Saving page source to: {pagesource_path}")
-        # Get cleaned and properly formatted page source for better readability
+        # Get raw page source (cleaning is disabled)
         page_source = get_clean_page_source()
         if not page_source:
-            # Fall back to raw page source if cleaning fails
+            # Fall back to raw page source if getting it fails
             page_source = ios_driver.driver.page_source
         
         # Add XML declaration at the top if not present
