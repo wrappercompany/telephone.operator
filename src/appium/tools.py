@@ -16,9 +16,6 @@ from ..ui.console import console, Panel, print_error, print_warning, print_succe
 
 logger = logging.getLogger(__name__)
 
-# Store the previous page source for diffing
-previous_page_source = None
-
 class LocatorStrategy(str, Enum):
     ACCESSIBILITY_ID = "accessibility_id"
     XPATH = "xpath"
@@ -45,92 +42,6 @@ def check_driver_connection() -> Tuple[bool, str]:
         print_error(error_msg)
         return False, error_msg
     return True, "Driver connected"
-
-def xml_diff(old_xml: str, new_xml: str) -> str:
-    """Generate a diff between two XML strings with color formatting."""
-    if not old_xml:
-        return new_xml
-    
-    try:
-        from lxml import etree
-        import re
-        
-        # Try to format both XMLs consistently before diffing
-        def format_xml_string(xml_str):
-            try:
-                parser = etree.XMLParser(remove_blank_text=True)
-                tree = etree.fromstring(xml_str.encode(), parser)
-                formatted = etree.tostring(tree, pretty_print=True, encoding='unicode')
-                
-                # Apply consistent formatting
-                lines = formatted.splitlines()
-                indent_level = 0
-                formatted_lines = []
-                for line in lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    
-                    # Adjust indent level based on XML structure
-                    if stripped.startswith('</'):
-                        # Closing tag reduces indent level
-                        indent_level = max(0, indent_level - 1)
-                    
-                    # Add proper indentation
-                    formatted_lines.append('  ' * indent_level + stripped)
-                    
-                    # Opening tag or self-closing tag
-                    if stripped.endswith('>') and not stripped.endswith('/>') and not stripped.startswith('</'):
-                        # Check if this is not a self-closing tag
-                        if '</' not in stripped:
-                            indent_level += 1
-                
-                return '\n'.join(formatted_lines)
-            except Exception:
-                # If formatting fails, return original
-                return xml_str
-        
-        # Format both XML strings consistently
-        old_xml = format_xml_string(old_xml)
-        new_xml = format_xml_string(new_xml)
-        
-    except ImportError:
-        # If lxml not available, continue with raw strings
-        pass
-    
-    old_lines = old_xml.splitlines()
-    new_lines = new_xml.splitlines()
-    
-    diff_lines = list(difflib.unified_diff(
-        old_lines,
-        new_lines,
-        fromfile='before',
-        tofile='after',
-        lineterm=''
-    ))
-    
-    # Add Rich color formatting
-    formatted_lines = []
-    for line in diff_lines:
-        if line.startswith('+'):
-            if not (line.startswith('+++') and 'after' in line):
-                # Green for additions
-                formatted_lines.append(f"[bold green]{line}[/bold green]")
-            else:
-                formatted_lines.append(line)
-        elif line.startswith('-'):
-            if not (line.startswith('---') and 'before' in line):
-                # Red for removals
-                formatted_lines.append(f"[bold red]{line}[/bold red]")
-            else:
-                formatted_lines.append(line)
-        elif line.startswith('@@'):
-            # Cyan for line info
-            formatted_lines.append(f"[cyan]{line}[/cyan]")
-        else:
-            formatted_lines.append(line)
-    
-    return '\n'.join(formatted_lines)
 
 def get_clean_page_source() -> Optional[str]:
     """
@@ -162,113 +73,156 @@ def get_clean_page_source() -> Optional[str]:
 # Type variable for generic function signatures
 T = TypeVar('T')
 
-async def with_page_source_diff(
-    action_fn: Callable[..., Awaitable[Any]],
-    action_name: str,
-    *args,
-    **kwargs
-) -> str:
+@function_tool
+async def get_page_source(query: str) -> str:
     """
-    Wrapper function that:
-    1. Gets page source before action
-    2. Performs the action
-    3. Gets page source after action
-    4. Generates and displays the diff
+    Get the current page source of the application with focused retrieval based on a query.
+    If a query is provided, returns the most relevant elements matching the query.
+    Otherwise, returns the full page source.
     
     Args:
-        action_fn: The async function to perform the action
-        action_name: Name of the action for display in diff panel
-        *args, **kwargs: Arguments to pass to the action function
-    
-    Returns:
-        A string with the action result and diff information
+        query: Search query to focus on specific elements or functionality. Use empty string for full page source.
     """
-    global previous_page_source
-    
-    # Check driver connection
-    driver_status, message = check_driver_connection()
-    if not driver_status:
-        return message
-    
-    try:
-        # Get page source before action
-        before_source = get_clean_page_source()
-        if not before_source:
-            logger.warning("Could not get page source before action")
-            before_source = ""
-        
-        # Perform the action
-        result = await action_fn(*args, **kwargs)
-        if isinstance(result, tuple) and len(result) >= 2:
-            success, message = result[0], result[1]
-            if not success:
-                return message
-        
-        # Get page source after action
-        after_source = get_clean_page_source()
-        if not after_source:
-            logger.warning("Could not get page source after action")
-            return f"Action completed, but could not get page source: {result}"
-        
-        # Generate diff
-        diff = xml_diff(before_source, after_source)
-        
-        # Display diff in console
-        console.print(Panel(diff, title=f"XML Diff - {action_name}", border_style="green", expand=False))
-        
-        # Update previous page source
-        previous_page_source = after_source
-        
-        # Return result with diff
-        if isinstance(result, str):
-            return f"{result}\n\nXML Diff:\n{diff}"
-        elif isinstance(result, tuple) and len(result) >= 2:
-            return f"{result[1]}\n\nXML Diff:\n{diff}"
-        else:
-            return f"Action completed successfully\n\nXML Diff:\n{diff}"
-    except Exception as e:
-        error_msg = f"Error performing action with diff: {str(e)}"
-        logger.error(error_msg)
-        logger.debug(f"Stack trace: {traceback.format_exc()}")
-        print_error(error_msg)
-        return error_msg
-
-@function_tool
-async def get_page_source() -> str:
-    """
-    Get the current page source of the application.
-    Returns the raw XML with diffs from the previous state.
-    """
-    global previous_page_source
-    
-    logger.info("Tool called: get_page_source")
+    logger.info(f"Tool called: get_page_source with query='{query}'")
     
     driver_status, message = check_driver_connection()
     if not driver_status:
         return message
     
     try:
-        # Get raw page source (cleaning disabled)
+        # Get raw page source
         page_source = get_clean_page_source()
         if not page_source:
             error_msg = "Page source is empty or could not be retrieved"
             logger.warning(error_msg)
             return error_msg
         
-        # Generate diff if we have a previous page source
-        if previous_page_source:
-            diff = xml_diff(previous_page_source, page_source)
-            # Display formatted diff
-            console.print(Panel(diff, title="XML Diff", border_style="green", expand=False))
+        # If no query, return the full page source
+        if not query:
+            logger.info("Empty query provided, returning full page source")
+            console.print(Panel(page_source, title="Full Page Source", border_style="blue", expand=False))
+            return page_source
         
-        # Always display formatted current page source
-        console.print(Panel(page_source, title="Page Source", border_style="blue", expand=False))
+        # Otherwise, process the query and retrieve relevant parts
+        try:
+            from lxml import etree
+            import re
+            
+            logger.info(f"Analyzing page source for query: '{query}'")
+            
+            # Parse the XML
+            root = etree.fromstring(page_source.encode('utf-8'))
+            
+            # Prepare search terms from the query
+            search_terms = query.lower().split()
+            
+            # Function to score element relevance
+            def score_element(element):
+                element_text = ' '.join([
+                    element.get('name', ''),
+                    element.get('label', ''),
+                    element.get('value', ''),
+                    element.get('hint', ''),
+                    element.get('text', ''),
+                    element.text or ''
+                ]).lower()
+                
+                # Score based on attribute matches
+                score = 0
+                for term in search_terms:
+                    if term in element_text:
+                        score += 10  # Higher weight for exact matches
+                    elif any(term in attr for attr in element_text.split()):
+                        score += 5   # Lower weight for partial matches
+                
+                # Boost score for interactive elements when looking for functionality
+                if ('button' in query.lower() or 'tap' in query.lower() or 'click' in query.lower()) and \
+                   ('button' in element.tag.lower() or element.get('type') == 'XCUIElementTypeButton'):
+                    score += 15
+                
+                # Boost score for input fields when looking for text entry
+                if ('input' in query.lower() or 'text' in query.lower() or 'enter' in query.lower()) and \
+                   ('field' in element.tag.lower() or 'text' in element.tag.lower() or 
+                    element.get('type') in ['XCUIElementTypeTextField', 'XCUIElementTypeSecureTextField']):
+                    score += 15
+                
+                # Boost score for navigation elements
+                if ('menu' in query.lower() or 'navigation' in query.lower() or 'tab' in query.lower()) and \
+                   ('tab' in element.tag.lower() or 'bar' in element.tag.lower() or 
+                    element.get('type') in ['XCUIElementTypeTabBar', 'XCUIElementTypeNavigationBar']):
+                    score += 15
+                
+                return score
+            
+            # Find all elements in the tree
+            all_elements = root.xpath('//*')
+            
+            # Score each element
+            scored_elements = [(element, score_element(element)) for element in all_elements]
+            
+            # Sort by score, descending
+            scored_elements.sort(key=lambda x: x[1], reverse=True)
+            
+            # Take top N relevant elements
+            top_n = 15
+            relevant_elements = scored_elements[:top_n]
+            
+            # Filter out elements with zero score
+            relevant_elements = [item for item in relevant_elements if item[1] > 0]
+            
+            # If no relevant elements found
+            if not relevant_elements:
+                logger.info(f"No elements found matching query: '{query}'")
+                result = f"No elements found matching query: '{query}'\n\nFull page source is available if needed."
+                console.print(Panel(result, title=f"Query Results: {query}", border_style="yellow", expand=False))
+                return result
+            
+            # Format the relevant elements for display
+            result = f"Query: '{query}'\n\nRelevant Elements:\n"
+            for i, (element, score) in enumerate(relevant_elements, 1):
+                # Get element attributes for display
+                attrs = {
+                    'name': element.get('name', ''),
+                    'label': element.get('label', ''),
+                    'value': element.get('value', ''),
+                    'type': element.get('type', ''),
+                    'enabled': element.get('enabled', ''),
+                    'visible': element.get('visible', ''),
+                    'accessible': element.get('accessible', ''),
+                    'x': element.get('x', ''),
+                    'y': element.get('y', ''),
+                    'width': element.get('width', ''),
+                    'height': element.get('height', '')
+                }
+                
+                # Filter out empty attributes
+                attrs = {k: v for k, v in attrs.items() if v}
+                
+                # Create formatted string of attributes
+                attrs_str = ', '.join([f"{k}='{v}'" for k, v in attrs.items()])
+                
+                # Add to result
+                result += f"{i}. Element (relevance score: {score}):\n"
+                result += f"   Type: {element.tag}\n"
+                result += f"   Attributes: {attrs_str}\n\n"
+            
+            result += "Use these elements with tap_element by specifying their 'name' or other attributes."
+            
+            # Display formatted results
+            console.print(Panel(result, title=f"Query Results: {query}", border_style="green", expand=False))
+            
+            logger.info(f"Found {len(relevant_elements)} elements matching query: '{query}'")
+            return result
+            
+        except ImportError:
+            # If lxml not available, return full page source with a note
+            logger.warning("lxml not available for element querying, returning full page source")
+            return f"Note: Enhanced querying unavailable (lxml missing).\nQuery: '{query}'\n\n{page_source}"
+        except Exception as e:
+            # If parsing fails, still return the full page source
+            logger.error(f"Error parsing page source for query: {str(e)}")
+            return f"Error analyzing elements for query '{query}': {str(e)}\n\nReturning full page source:\n\n{page_source}"
         
-        # Store current page source for future diffs
-        previous_page_source = page_source
-        
-        logger.info("Page source retrieved successfully")
-        return page_source
     except Exception as e:
         error_msg = f"Failed to get page source: {str(e)}"
         logger.error(error_msg)
@@ -294,48 +248,48 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         print_error(error_msg)
         return error_msg
     
-    async def perform_tap() -> Tuple[bool, str]:
-        try:
-            locator_map = {
-                LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
-                LocatorStrategy.XPATH: AppiumBy.XPATH,
-                LocatorStrategy.NAME: AppiumBy.NAME,
-                LocatorStrategy.CLASS_NAME: AppiumBy.CLASS_NAME
-            }
-            
-            by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
-            logger.debug(f"Using locator strategy: {by_strategy} with value: {element_id}")
-            
-            try:
-                element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
-            except Exception as e:
-                error_msg = f"Element not found: {str(e)}"
-                logger.warning(error_msg)
-                print_warning(error_msg)
-                return False, error_msg
-            
-            # Check if element is visible
-            if not element.is_displayed():
-                warning_msg = f"Element with {by_strategy}: {element_id} is not visible"
-                logger.warning(warning_msg)
-                print_warning(warning_msg)
-                return False, warning_msg
-                
-            element.click()
-            
-            success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
-            logger.info(success_msg)
-            print_success(success_msg)
-            return True, success_msg
-        except Exception as e:
-            error_msg = f"Failed to tap element: {str(e)}"
-            logger.error(error_msg)
-            logger.debug(f"Stack trace: {traceback.format_exc()}")
-            print_error(error_msg)
-            return False, error_msg
+    driver_status, message = check_driver_connection()
+    if not driver_status:
+        return message
     
-    # Use the common wrapper for page source diff handling
-    return await with_page_source_diff(perform_tap, f"Tapped {element_id}")
+    try:
+        locator_map = {
+            LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
+            LocatorStrategy.XPATH: AppiumBy.XPATH,
+            LocatorStrategy.NAME: AppiumBy.NAME,
+            LocatorStrategy.CLASS_NAME: AppiumBy.CLASS_NAME
+        }
+        
+        by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
+        logger.debug(f"Using locator strategy: {by_strategy} with value: {element_id}")
+        
+        try:
+            element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
+        except Exception as e:
+            error_msg = f"Element not found: {str(e)}"
+            logger.warning(error_msg)
+            print_warning(error_msg)
+            return error_msg
+        
+        # Check if element is visible
+        if not element.is_displayed():
+            warning_msg = f"Element with {by_strategy}: {element_id} is not visible"
+            logger.warning(warning_msg)
+            print_warning(warning_msg)
+            return warning_msg
+            
+        element.click()
+        
+        success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
+    except Exception as e:
+        error_msg = f"Failed to tap element: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg
 
 @function_tool
 async def press_physical_button(button: PhysicalButton) -> str:
@@ -345,38 +299,18 @@ async def press_physical_button(button: PhysicalButton) -> str:
     Args:
         button: The button to press
     """
-    global previous_page_source
-    
     driver_status, message = check_driver_connection()
     if not driver_status:
         return message
     
     try:
-        # Get page source before action
-        before_source = get_clean_page_source()
-        if not before_source:
-            logger.warning("Could not get page source before button press")
-            before_source = ""
-        
         # Execute the button press
         ios_driver.driver.execute_script('mobile: pressButton', {'name': button.value})
         
-        # Get page source after action
-        after_source = get_clean_page_source()
-        if not after_source:
-            logger.warning("Could not get page source after button press")
-            return f"Successfully pressed {button.name} button, but could not get updated page source"
-        
-        # Generate XML diff
-        diff = xml_diff(before_source, after_source)
-        
-        # Update the previous page source
-        previous_page_source = after_source
-        
-        # Display formatted diff in console
-        console.print(Panel(diff, title=f"XML Diff - Pressed {button.name} button", border_style="green", expand=False))
-        
-        return f"Successfully pressed {button.name} button\n\nXML Diff:\n{diff}"
+        success_msg = f"Successfully pressed {button.name} button"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
     except Exception as e:
         error_msg = f"Failed to press button: {str(e)}"
         logger.error(error_msg)
@@ -394,35 +328,35 @@ async def swipe(direction: SwipeDirection) -> str:
     """
     logger.info(f"Tool called: swipe with direction={direction}")
     
-    async def perform_swipe() -> Tuple[bool, str]:
-        try:
-            window_size = ios_driver.driver.get_window_size()
-            width = window_size['width']
-            height = window_size['height']
-            
-            swipe_params = {
-                SwipeDirection.UP: (width * 0.5, height * 0.7, width * 0.5, height * 0.3),
-                SwipeDirection.DOWN: (width * 0.5, height * 0.3, width * 0.5, height * 0.7),
-                SwipeDirection.LEFT: (width * 0.8, height * 0.5, width * 0.2, height * 0.5),
-                SwipeDirection.RIGHT: (width * 0.2, height * 0.5, width * 0.8, height * 0.5)
-            }
-            
-            start_x, start_y, end_x, end_y = swipe_params[direction]
-            ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
-            
-            success_msg = f"Successfully performed {direction.value} swipe"
-            logger.info(success_msg)
-            print_success(success_msg)
-            return True, success_msg
-        except Exception as e:
-            error_msg = f"Failed to perform swipe: {str(e)}"
-            logger.error(error_msg)
-            logger.debug(f"Stack trace: {traceback.format_exc()}")
-            print_error(error_msg)
-            return False, error_msg
+    driver_status, message = check_driver_connection()
+    if not driver_status:
+        return message
     
-    # Use the common wrapper for page source diff handling
-    return await with_page_source_diff(perform_swipe, f"Swiped {direction.value}")
+    try:
+        window_size = ios_driver.driver.get_window_size()
+        width = window_size['width']
+        height = window_size['height']
+        
+        swipe_params = {
+            SwipeDirection.UP: (width * 0.5, height * 0.7, width * 0.5, height * 0.3),
+            SwipeDirection.DOWN: (width * 0.5, height * 0.3, width * 0.5, height * 0.7),
+            SwipeDirection.LEFT: (width * 0.8, height * 0.5, width * 0.2, height * 0.5),
+            SwipeDirection.RIGHT: (width * 0.2, height * 0.5, width * 0.8, height * 0.5)
+        }
+        
+        start_x, start_y, end_x, end_y = swipe_params[direction]
+        ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
+        
+        success_msg = f"Successfully performed {direction.value} swipe"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
+    except Exception as e:
+        error_msg = f"Failed to perform swipe: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg
 
 @function_tool
 async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy] = None) -> str:
@@ -442,41 +376,41 @@ async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy
         print_error(error_msg)
         return error_msg
     
-    async def perform_input() -> Tuple[bool, str]:
-        try:
-            locator_map = {
-                LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
-                LocatorStrategy.XPATH: AppiumBy.XPATH,
-                LocatorStrategy.NAME: AppiumBy.NAME,
-                LocatorStrategy.CLASS_NAME: AppiumBy.CLASS_NAME
-            }
-            
-            by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
-            
-            try:
-                element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
-            except Exception as e:
-                error_msg = f"Element not found: {str(e)}"
-                logger.warning(error_msg)
-                print_warning(error_msg)
-                return False, error_msg
-                
-            element.clear()
-            element.send_keys(text)
-            
-            success_msg = f"Successfully sent input '{text}' to element with {by_strategy}: {element_id}"
-            logger.info(success_msg)
-            print_success(success_msg)
-            return True, success_msg
-        except Exception as e:
-            error_msg = f"Failed to send input: {str(e)}"
-            logger.error(error_msg)
-            logger.debug(f"Stack trace: {traceback.format_exc()}")
-            print_error(error_msg)
-            return False, error_msg
+    driver_status, message = check_driver_connection()
+    if not driver_status:
+        return message
     
-    # Use the common wrapper for page source diff handling
-    return await with_page_source_diff(perform_input, f"Input '{text}' to {element_id}")
+    try:
+        locator_map = {
+            LocatorStrategy.ACCESSIBILITY_ID: AppiumBy.ACCESSIBILITY_ID,
+            LocatorStrategy.XPATH: AppiumBy.XPATH,
+            LocatorStrategy.NAME: AppiumBy.NAME,
+            LocatorStrategy.CLASS_NAME: AppiumBy.CLASS_NAME
+        }
+        
+        by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
+        
+        try:
+            element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
+        except Exception as e:
+            error_msg = f"Element not found: {str(e)}"
+            logger.warning(error_msg)
+            print_warning(error_msg)
+            return error_msg
+            
+        element.clear()
+        element.send_keys(text)
+        
+        success_msg = f"Successfully sent input '{text}' to element with {by_strategy}: {element_id}"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
+    except Exception as e:
+        error_msg = f"Failed to send input: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg
 
 @function_tool
 async def navigate_to(url: str) -> str:
@@ -486,38 +420,18 @@ async def navigate_to(url: str) -> str:
     Args:
         url: The URL to navigate to
     """
-    global previous_page_source
-    
     driver_status, message = check_driver_connection()
     if not driver_status:
         return message
     
     try:
-        # Get page source before navigation
-        before_source = get_clean_page_source()
-        if not before_source:
-            logger.warning("Could not get page source before navigation")
-            before_source = ""
-        
         # Navigate to URL
         ios_driver.driver.get(url)
         
-        # Get page source after navigation
-        after_source = get_clean_page_source()
-        if not after_source:
-            logger.warning("Could not get page source after navigation")
-            return f"Successfully navigated to {url}, but could not get updated page source"
-        
-        # Generate XML diff
-        diff = xml_diff(before_source, after_source)
-        
-        # Update the previous page source
-        previous_page_source = after_source
-        
-        # Display formatted diff in console
-        console.print(Panel(diff, title=f"XML Diff - Navigated to {url}", border_style="green", expand=False))
-        
-        return f"Successfully navigated to {url}\n\nXML Diff:\n{diff}"
+        success_msg = f"Successfully navigated to {url}"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
     except Exception as e:
         error_msg = f"Failed to navigate: {str(e)}"
         logger.error(error_msg)
@@ -533,8 +447,6 @@ async def launch_app(bundle_id: str) -> str:
     Args:
         bundle_id: The bundle ID of the app to launch
     """
-    global previous_page_source
-    
     logger.info(f"Tool called: launch_app with bundle_id={bundle_id}")
     
     if not bundle_id:
@@ -543,63 +455,44 @@ async def launch_app(bundle_id: str) -> str:
         print_error(error_msg)
         return error_msg
     
-    async def perform_launch() -> Tuple[bool, str]:
-        try:
-            # Check if driver exists and try to relaunch app
-            if ios_driver.driver:
-                logger.info(f"Driver exists, attempting to terminate and reactivate app: {bundle_id}")
-                try:
-                    ios_driver.driver.terminate_app(bundle_id)
-                    ios_driver.driver.activate_app(bundle_id)
-                    
-                    success_msg = f"Successfully relaunched app with bundle ID: {bundle_id}"
-                    logger.info(success_msg)
-                    print_success(success_msg)
-                    return True, success_msg
-                except Exception as e:
-                    logger.warning(f"Failed to relaunch app via existing driver: {str(e)}")
-                    logger.debug(f"Stack trace: {traceback.format_exc()}")
-                    logger.info("Will try to re-initialize driver")
-                    ios_driver.cleanup()
-            
-            # Initialize driver
-            logger.info(f"Initializing driver for app: {bundle_id}")
-            result = ios_driver.init_driver(bundle_id)
-            
-            if result:
-                success_msg = f"Successfully launched app with bundle ID: {bundle_id}"
+    try:
+        # Check if driver exists and try to relaunch app
+        if ios_driver.driver:
+            logger.info(f"Driver exists, attempting to terminate and reactivate app: {bundle_id}")
+            try:
+                ios_driver.driver.terminate_app(bundle_id)
+                ios_driver.driver.activate_app(bundle_id)
+                
+                success_msg = f"Successfully relaunched app with bundle ID: {bundle_id}"
                 logger.info(success_msg)
                 print_success(success_msg)
-                return True, success_msg
-            else:
-                error_msg = f"Failed to initialize driver for app: {bundle_id}"
-                logger.error(error_msg)
-                print_error(error_msg)
-                return False, error_msg
-        except Exception as e:
-            error_msg = f"Failed to launch app: {str(e)}"
+                return success_msg
+            except Exception as e:
+                logger.warning(f"Failed to relaunch app via existing driver: {str(e)}")
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                logger.info("Will try to re-initialize driver")
+                ios_driver.cleanup()
+        
+        # Initialize driver
+        logger.info(f"Initializing driver for app: {bundle_id}")
+        result = ios_driver.init_driver(bundle_id)
+        
+        if result:
+            success_msg = f"Successfully launched app with bundle ID: {bundle_id}"
+            logger.info(success_msg)
+            print_success(success_msg)
+            return success_msg
+        else:
+            error_msg = f"Failed to initialize driver for app: {bundle_id}"
             logger.error(error_msg)
-            logger.debug(f"Stack trace: {traceback.format_exc()}")
             print_error(error_msg)
-            return False, error_msg
-    
-    # Launch the app first
-    result = await perform_launch()
-    if isinstance(result, tuple) and not result[0]:
-        return result[1]
-    
-    # Then get and display the page source
-    page_source = get_clean_page_source()
-    if page_source:
-        # Update previous page source
-        previous_page_source = page_source
-        
-        # Display initial XML in console
-        console.print(Panel(page_source, title=f"Initial XML - App {bundle_id} Launched", border_style="blue", expand=False))
-        
-        return f"{result[1]}\n\nInitial XML:\n{page_source}"
-    else:
-        return result[1]
+            return error_msg
+    except Exception as e:
+        error_msg = f"Failed to launch app: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg
 
 @function_tool
 async def take_screenshot() -> str:

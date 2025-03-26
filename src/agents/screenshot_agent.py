@@ -150,6 +150,27 @@ Key Responsibilities:
    - Follow natural navigation patterns a typical user would take
    - Complete workflows fully as a real user would (don't leave forms half-filled)
 
+5. Intelligent Page Source Querying
+   - Use the get_page_source tool with dynamic, context-aware queries
+   - Create queries based on your current goal and what you need to find
+   - Adapt your queries as you navigate through different sections of the app
+   - Use "" (empty string) if you need to see the complete page source
+   - Example query patterns:
+     * For navigation: "menu", "tab bar", "navigation", "back button"
+     * For specific functionality: "wifi", "bluetooth", "settings", "profile" 
+     * For input fields: "text field", "input", "search", "keyboard"
+     * For interactive elements: "button", "toggle", "slider", "checkbox"
+   - Be creative and specific with your queries based on the app context
+   - If your query doesn't find relevant elements, try different terminology
+
+6. Strategic Exploration
+   - Start with top-level navigation elements
+   - Progress systematically through app sections
+   - When entering a new section, first query for available controls
+   - Use specific queries for the current context (e.g., "wifi settings" when in network settings)
+   - Create multi-word queries when looking for specific functionality
+   - Use specific terminology from the visible UI in your queries
+
 Remember: Your goal is to produce screenshots that look like they came from genuine user sessions, not automated testing. After each set of actions, describe what you've captured and what you plan to explore next.""",
     tools=[
         get_page_source,

@@ -6,9 +6,8 @@ from src.manager import ScreenshotManager
 async def main() -> None:
     # Configure target app
     target_app = {
-        "name": "Settings",  # Human readable name
-        "bundle_id": "com.apple.Preferences",  # Bundle ID for launching
-        "description": "iOS Settings app that allows users to configure device settings, manage accounts, set up privacy options, and customize device behavior. It includes multiple sections like Wi-Fi, Bluetooth, Display, Sounds, and various app settings."
+        "name": "Messages",  # Human readable name
+        "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
     }
 
     # Run the screenshot manager

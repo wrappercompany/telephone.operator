@@ -141,7 +141,7 @@ USER FLOWS:
 SUCCESS CRITERIA:
 {plan_criteria}
 
-Start by launching the app and systematically work through each section.""",
+Start by launching the app and systematically work through each section. Use the get_page_source tool with context-aware queries to find relevant elements for each step.""",
                 "role": "user"
             }]
 
