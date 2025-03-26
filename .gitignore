@@ -31,3 +31,4 @@ telephone_operator.log
 
 
 .venv/
+**/.DS_Store
