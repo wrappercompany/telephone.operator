@@ -163,13 +163,6 @@ Key Responsibilities:
    - Be creative and specific with your queries based on the app context
    - If your query doesn't find relevant elements, try different terminology
 
-6. Strategic Exploration
-   - Start with top-level navigation elements
-   - Progress systematically through app sections
-   - When entering a new section, first query for available controls
-   - Use specific queries for the current context (e.g., "wifi settings" when in network settings)
-   - Create multi-word queries when looking for specific functionality
-   - Use specific terminology from the visible UI in your queries
 
 Remember: Your goal is to produce screenshots that look like they came from genuine user sessions, not automated testing. After each set of actions, describe what you've captured and what you plan to explore next.""",
     tools=[

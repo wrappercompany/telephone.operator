@@ -17,8 +17,9 @@ from .agents.screenshot_agent import screenshot_taker
 from .agents.coverage_agent import coverage_evaluator, create_default_evaluation
 from .agents.planner_agent import planner_agent, ScreenshotPlan
 from .ui.printer import Printer
+from .ui.chat import ChatInterface, CHAT_MODE_INSTRUCTIONS
 from .appium.driver import ios_driver
-from .ui.console import print_missing_api_key_instructions, CoverageEvaluation, print_error, print_warning
+from .ui.console import print_missing_api_key_instructions, CoverageEvaluation, print_error, print_warning, print_success
 
 logger = logging.getLogger(__name__)
 
@@ -480,3 +481,46 @@ Start by launching the app and systematically work through each section. Use the
                     is_done=True
                 )
                 return None 
+
+    async def chat_with_screenshot_agent(self, app_config: dict) -> None:
+        """Start a direct chat session with the screenshot agent."""
+        trace_id = gen_trace_id()
+        with trace("Screenshot agent chat trace", trace_id=trace_id):
+            logger.info(f"Starting direct chat with screenshot agent for {app_config.get('name', 'unknown app')}")
+            
+            # Validate app_config
+            if not app_config or 'name' not in app_config or 'bundle_id' not in app_config:
+                error_msg = "Invalid app configuration: Must contain 'name' and 'bundle_id'"
+                logger.error(error_msg)
+                print_error(error_msg)
+                return
+            
+            # Print trace ID for reference
+            self.printer.update_item(
+                "trace_id",
+                f"[dim blue]View trace: https://platform.openai.com/traces/{trace_id}[/dim blue]",
+                hide_checkmark=True
+            )
+            
+            try:
+                # Initialize the chat interface
+                chat = ChatInterface(self.console)
+                
+                # Prepare the initial message using the specific chat mode instructions
+                initial_message = CHAT_MODE_INSTRUCTIONS.format(
+                    app_name=app_config['name'],
+                    bundle_id=app_config['bundle_id']
+                )
+                
+                # Start the chat session
+                print_success(f"Starting chat session for {app_config['name']}")
+                await chat.chat_with_agent(
+                    agent=screenshot_taker, 
+                    initial_message=initial_message
+                )
+                
+            except Exception as e:
+                error_msg = f"Error during screenshot agent chat: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                print_error(error_msg) 

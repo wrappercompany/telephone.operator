@@ -74,17 +74,11 @@ def get_clean_page_source() -> Optional[str]:
 T = TypeVar('T')
 
 @function_tool
-async def get_page_source(query: str) -> str:
+async def get_page_source() -> str:
     """
-    Get the current page source of the application with focused retrieval based on a query.
-    If a query is provided, returns the most relevant elements matching the query.
-    Otherwise, returns the full page source.
-    
-    Args:
-        query: Search query to focus on specific elements or functionality. Use empty string for full page source.
+    Get the current page source of the application.
     """
-    logger.info(f"Tool called: get_page_source with query='{query}'")
-    
+
     driver_status, message = check_driver_connection()
     if not driver_status:
         return message
@@ -97,131 +91,11 @@ async def get_page_source(query: str) -> str:
             logger.warning(error_msg)
             return error_msg
         
-        # If no query, return the full page source
-        if not query:
-            logger.info("Empty query provided, returning full page source")
-            console.print(Panel(page_source, title="Full Page Source", border_style="blue", expand=False))
-            return page_source
+        # Display the full page source
+        console.print(Panel(page_source, title="Full Page Source", border_style="blue", expand=False))
         
-        # Otherwise, process the query and retrieve relevant parts
-        try:
-            from lxml import etree
-            import re
-            
-            logger.info(f"Analyzing page source for query: '{query}'")
-            
-            # Parse the XML
-            root = etree.fromstring(page_source.encode('utf-8'))
-            
-            # Prepare search terms from the query
-            search_terms = query.lower().split()
-            
-            # Function to score element relevance
-            def score_element(element):
-                element_text = ' '.join([
-                    element.get('name', ''),
-                    element.get('label', ''),
-                    element.get('value', ''),
-                    element.get('hint', ''),
-                    element.get('text', ''),
-                    element.text or ''
-                ]).lower()
-                
-                # Score based on attribute matches
-                score = 0
-                for term in search_terms:
-                    if term in element_text:
-                        score += 10  # Higher weight for exact matches
-                    elif any(term in attr for attr in element_text.split()):
-                        score += 5   # Lower weight for partial matches
-                
-                # Boost score for interactive elements when looking for functionality
-                if ('button' in query.lower() or 'tap' in query.lower() or 'click' in query.lower()) and \
-                   ('button' in element.tag.lower() or element.get('type') == 'XCUIElementTypeButton'):
-                    score += 15
-                
-                # Boost score for input fields when looking for text entry
-                if ('input' in query.lower() or 'text' in query.lower() or 'enter' in query.lower()) and \
-                   ('field' in element.tag.lower() or 'text' in element.tag.lower() or 
-                    element.get('type') in ['XCUIElementTypeTextField', 'XCUIElementTypeSecureTextField']):
-                    score += 15
-                
-                # Boost score for navigation elements
-                if ('menu' in query.lower() or 'navigation' in query.lower() or 'tab' in query.lower()) and \
-                   ('tab' in element.tag.lower() or 'bar' in element.tag.lower() or 
-                    element.get('type') in ['XCUIElementTypeTabBar', 'XCUIElementTypeNavigationBar']):
-                    score += 15
-                
-                return score
-            
-            # Find all elements in the tree
-            all_elements = root.xpath('//*')
-            
-            # Score each element
-            scored_elements = [(element, score_element(element)) for element in all_elements]
-            
-            # Sort by score, descending
-            scored_elements.sort(key=lambda x: x[1], reverse=True)
-            
-            # Take top N relevant elements
-            top_n = 15
-            relevant_elements = scored_elements[:top_n]
-            
-            # Filter out elements with zero score
-            relevant_elements = [item for item in relevant_elements if item[1] > 0]
-            
-            # If no relevant elements found
-            if not relevant_elements:
-                logger.info(f"No elements found matching query: '{query}'")
-                result = f"No elements found matching query: '{query}'\n\nFull page source is available if needed."
-                console.print(Panel(result, title=f"Query Results: {query}", border_style="yellow", expand=False))
-                return result
-            
-            # Format the relevant elements for display
-            result = f"Query: '{query}'\n\nRelevant Elements:\n"
-            for i, (element, score) in enumerate(relevant_elements, 1):
-                # Get element attributes for display
-                attrs = {
-                    'name': element.get('name', ''),
-                    'label': element.get('label', ''),
-                    'value': element.get('value', ''),
-                    'type': element.get('type', ''),
-                    'enabled': element.get('enabled', ''),
-                    'visible': element.get('visible', ''),
-                    'accessible': element.get('accessible', ''),
-                    'x': element.get('x', ''),
-                    'y': element.get('y', ''),
-                    'width': element.get('width', ''),
-                    'height': element.get('height', '')
-                }
-                
-                # Filter out empty attributes
-                attrs = {k: v for k, v in attrs.items() if v}
-                
-                # Create formatted string of attributes
-                attrs_str = ', '.join([f"{k}='{v}'" for k, v in attrs.items()])
-                
-                # Add to result
-                result += f"{i}. Element (relevance score: {score}):\n"
-                result += f"   Type: {element.tag}\n"
-                result += f"   Attributes: {attrs_str}\n\n"
-            
-            result += "Use these elements with tap_element by specifying their 'name' or other attributes."
-            
-            # Display formatted results
-            console.print(Panel(result, title=f"Query Results: {query}", border_style="green", expand=False))
-            
-            logger.info(f"Found {len(relevant_elements)} elements matching query: '{query}'")
-            return result
-            
-        except ImportError:
-            # If lxml not available, return full page source with a note
-            logger.warning("lxml not available for element querying, returning full page source")
-            return f"Note: Enhanced querying unavailable (lxml missing).\nQuery: '{query}'\n\n{page_source}"
-        except Exception as e:
-            # If parsing fails, still return the full page source
-            logger.error(f"Error parsing page source for query: {str(e)}")
-            return f"Error analyzing elements for query '{query}': {str(e)}\n\nReturning full page source:\n\n{page_source}"
+        logger.info("Returning full page source")
+        return page_source
         
     except Exception as e:
         error_msg = f"Failed to get page source: {str(e)}"
@@ -319,14 +193,18 @@ async def press_physical_button(button: PhysicalButton) -> str:
         return error_msg
 
 @function_tool
-async def swipe(direction: SwipeDirection) -> str:
+async def swipe(direction: SwipeDirection = None, start_x: Optional[int] = None, start_y: Optional[int] = None, end_x: Optional[int] = None, end_y: Optional[int] = None) -> str:
     """
-    Perform a swipe gesture in the specified direction.
+    Perform a swipe gesture in the specified direction or between coordinates.
     
     Args:
-        direction: The direction to swipe
+        direction: The direction to swipe (can be omitted if using coordinates)
+        start_x: Starting X coordinate in pixels (actual screen coordinates, not normalized)
+        start_y: Starting Y coordinate in pixels (actual screen coordinates, not normalized)
+        end_x: Ending X coordinate in pixels (actual screen coordinates, not normalized)
+        end_y: Ending Y coordinate in pixels (actual screen coordinates, not normalized)
     """
-    logger.info(f"Tool called: swipe with direction={direction}")
+    logger.info(f"Tool called: swipe with direction={direction}, coordinates=({start_x}, {start_y}) to ({end_x}, {end_y})")
     
     driver_status, message = check_driver_connection()
     if not driver_status:
@@ -337,20 +215,49 @@ async def swipe(direction: SwipeDirection) -> str:
         width = window_size['width']
         height = window_size['height']
         
-        swipe_params = {
-            SwipeDirection.UP: (width * 0.5, height * 0.7, width * 0.5, height * 0.3),
-            SwipeDirection.DOWN: (width * 0.5, height * 0.3, width * 0.5, height * 0.7),
-            SwipeDirection.LEFT: (width * 0.8, height * 0.5, width * 0.2, height * 0.5),
-            SwipeDirection.RIGHT: (width * 0.2, height * 0.5, width * 0.8, height * 0.5)
-        }
+        # Check if we're using direction-based or coordinate-based swiping
+        using_coordinates = all(coord is not None for coord in [start_x, start_y, end_x, end_y])
+        using_direction = direction is not None
         
-        start_x, start_y, end_x, end_y = swipe_params[direction]
-        ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
+        if not using_coordinates and not using_direction:
+            error_msg = "Either direction or all coordinates (start_x, start_y, end_x, end_y) must be provided"
+            logger.error(error_msg)
+            print_error(error_msg)
+            return error_msg
         
-        success_msg = f"Successfully performed {direction.value} swipe"
-        logger.info(success_msg)
-        print_success(success_msg)
-        return success_msg
+        if using_coordinates:
+            # Validate coordinates are within screen bounds
+            if (start_x < 0 or start_x > width or start_y < 0 or start_y > height or 
+                end_x < 0 or end_x > width or end_y < 0 or end_y > height):
+                warning_msg = (f"Some coordinates are outside screen bounds ({width}x{height}). "
+                              f"Coordinates: ({start_x}, {start_y}) to ({end_x}, {end_y})")
+                logger.warning(warning_msg)
+                print_warning(warning_msg)
+                # Continue anyway as the user might know what they're doing
+            
+            logger.info(f"Swiping with raw coordinates: ({start_x}, {start_y}) to ({end_x}, {end_y})")
+            ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
+            
+            success_msg = f"Successfully performed coordinate swipe from ({start_x}, {start_y}) to ({end_x}, {end_y})"
+            logger.info(success_msg)
+            print_success(success_msg)
+            return success_msg
+        else:
+            # Use direction-based swiping
+            swipe_params = {
+                SwipeDirection.UP: (width * 0.5, height * 0.7, width * 0.5, height * 0.3),
+                SwipeDirection.DOWN: (width * 0.5, height * 0.3, width * 0.5, height * 0.7),
+                SwipeDirection.LEFT: (width * 0.8, height * 0.5, width * 0.2, height * 0.5),
+                SwipeDirection.RIGHT: (width * 0.2, height * 0.5, width * 0.8, height * 0.5)
+            }
+            
+            start_x, start_y, end_x, end_y = swipe_params[direction]
+            ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
+            
+            success_msg = f"Successfully performed {direction.value} swipe"
+            logger.info(success_msg)
+            print_success(success_msg)
+            return success_msg
     except Exception as e:
         error_msg = f"Failed to perform swipe: {str(e)}"
         logger.error(error_msg)
