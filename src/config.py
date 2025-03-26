@@ -41,7 +41,7 @@ class Config(BaseModel):
     openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
     max_iterations: int = Field(20, description="Maximum iterations for screenshot capture")
     max_agent_turns: int = Field(30, description="Maximum turns per agent run")
-    test_artifacts_dir: str = Field("test_artifacts", description="Directory for test artifacts")
+    artifacts_dir: str = Field("artifacts", description="Directory for test artifacts")
     
     @field_validator('max_iterations', 'max_agent_turns')
     def positive_int(cls, v, info: FieldValidationInfo):
@@ -51,17 +51,17 @@ class Config(BaseModel):
             return 20 if field_name == 'max_iterations' else 30
         return v
         
-    @field_validator('test_artifacts_dir')
+    @field_validator('artifacts_dir')
     def valid_directory(cls, v):
         if not v:
-            logger.warning("Empty test_artifacts_dir, using default")
-            return "test_artifacts"
+            logger.warning("Empty artifacts_dir, using default")
+            return "artifacts"
         # Ensure directory exists
         try:
             os.makedirs(v, exist_ok=True)
-            logger.info(f"Ensured test artifacts directory exists: {v}")
+            logger.info(f"Ensured artifacts directory exists: {v}")
         except Exception as e:
-            logger.error(f"Failed to create test artifacts directory {v}: {str(e)}")
+            logger.error(f"Failed to create artifacts directory {v}: {str(e)}")
         return v
 
 def load_config() -> Config:

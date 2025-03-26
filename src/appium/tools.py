@@ -516,7 +516,7 @@ async def take_screenshot() -> str:
             # Continue with the default app_dir_name
         
         # Create base output directory structure
-        output_dir = Path("test_artifacts")
+        output_dir = Path("artifacts")
         app_dir = output_dir / app_dir_name
         screenshots_dir = app_dir / "screenshots"
         pagesource_dir = app_dir / "pagesource"

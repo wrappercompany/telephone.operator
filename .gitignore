@@ -21,8 +21,8 @@ env/
 .env
 *.env
 
-# Test artifacts
-test_artifacts/
+# Artifacts
+artifacts/
 
 logs/
 .pytest_cache/
