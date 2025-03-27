@@ -156,6 +156,15 @@ class IOSDriver:
     def cleanup(self):
         """Clean up the driver instance."""
         logger.info("Cleaning up driver instance")
+        # End action trace if it exists
+        try:
+            from .action_trace import action_tracer
+            action_tracer.end_trace()
+        except ImportError:
+            logger.debug("Action tracer not available")
+        except Exception as e:
+            logger.warning(f"Error ending action trace: {str(e)}")
+        
         if self.driver:
             try:
                 self.driver.quit()

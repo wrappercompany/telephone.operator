@@ -12,7 +12,11 @@ from typing import Optional, Dict, Any, Tuple, Callable, TypeVar, Awaitable
 from functools import wraps
 from .driver import ios_driver
 from .enums import AppiumStatus, AppAction
+from .action_trace import action_tracer
 from ..ui.console import console, Panel, print_error, print_warning, print_success
+import time
+import hashlib
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +156,54 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
         logger.debug(f"Using locator strategy: {by_strategy} with value: {element_id}")
         
+        # Update app state with current activity/view information if available
+        try:
+            # For iOS, try to get current activity/view
+            current_view = ios_driver.driver.execute_script('mobile: activeAppInfo')
+            if current_view:
+                action_tracer.update_app_state(
+                    current_activity=current_view.get('process'),
+                    current_screen=current_view.get('bundleId'),
+                    current_view=current_view.get('name', 'Unknown')
+                )
+        except Exception as e:
+            logger.debug(f"Could not get current app view: {str(e)}")
+        
+        # Get the page source before the action
+        try:
+            page_source = get_clean_page_source()
+            if page_source:
+                # Store a hash of the page source to detect changes
+                page_source_hash = hashlib.md5(page_source.encode()).hexdigest()
+                action_tracer.update_app_state(last_page_source_hash=page_source_hash)
+                
+                # Save the page source to a temp file for reference
+                page_source_dir = Path("artifacts") / "temp"
+                page_source_dir.mkdir(parents=True, exist_ok=True)
+                temp_page_source_path = page_source_dir / f"pre_tap_{int(time.time())}.xml"
+                temp_page_source_path.write_text(page_source, encoding='utf-8')
+            else:
+                logger.debug("Could not get page source before tap action")
+        except Exception as e:
+            logger.debug(f"Error capturing page source: {str(e)}")
+        
         try:
             element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
         except Exception as e:
             error_msg = f"Element not found: {str(e)}"
             logger.warning(error_msg)
             print_warning(error_msg)
+            
+            # Log the failed action
+            action_tracer.log_action("tap_element", {
+                "element_id": element_id,
+                "by": str(by) if by else "accessibility_id",
+                "status": "failed",
+                "reason": "element_not_found",
+                "error": str(e),
+                "selector_used": f"{by_strategy}={element_id}"
+            })
+            
             return error_msg
         
         # Check if element is visible
@@ -165,9 +211,70 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
             warning_msg = f"Element with {by_strategy}: {element_id} is not visible"
             logger.warning(warning_msg)
             print_warning(warning_msg)
-            return warning_msg
             
+            # Log the failed action
+            action_tracer.log_action("tap_element", {
+                "element_id": element_id,
+                "by": str(by) if by else "accessibility_id",
+                "status": "failed",
+                "reason": "element_not_visible",
+                "selector_used": f"{by_strategy}={element_id}"
+            })
+            
+            return warning_msg
+        
+        # Get comprehensive element attributes for better tracing
+        element_attributes = {}
+        try:
+            element_attributes = {
+                "text": element.text,
+                "tag_name": element.tag_name,
+                "location": element.location,
+                "size": element.size,
+                "enabled": element.is_enabled(),
+                "selected": element.is_selected(),
+                "rect": element.rect
+            }
+            
+            # Get all available attributes
+            for attr in ["name", "type", "label", "value"]:
+                try:
+                    attr_value = element.get_attribute(attr)
+                    if attr_value is not None:
+                        element_attributes[attr] = attr_value
+                except:
+                    pass
+                    
+            # Try to get the XPath of the element
+            try:
+                # Create an absolute XPath using attributes
+                xpath = None
+                if element.tag_name and element.get_attribute("label"):
+                    xpath = f"//{element.tag_name}[@label='{element.get_attribute('label')}']"
+                elif element.tag_name and element.get_attribute("name"):
+                    xpath = f"//{element.tag_name}[@name='{element.get_attribute('name')}']"
+                elif element.tag_name and element.text:
+                    xpath = f"//{element.tag_name}[contains(text(),'{element.text}')]"
+                    
+                if xpath:
+                    element_attributes["generated_xpath"] = xpath
+            except Exception as e:
+                logger.debug(f"Could not generate XPath: {str(e)}")
+                
+        except Exception as e:
+            logger.debug(f"Error getting element attributes: {str(e)}")
+            
+        # Perform the tap action
         element.click()
+        
+        # Log the successful action with enhanced information
+        action_tracer.log_action("tap_element", {
+            "element_id": element_id,
+            "by": str(by) if by else "accessibility_id",
+            "status": "success",
+            "element_details": element_attributes,
+            "selector_used": f"{by_strategy}={element_id}"
+        })
         
         success_msg = f"Successfully tapped visible element with {by_strategy}: {element_id}"
         logger.info(success_msg)
@@ -178,6 +285,17 @@ async def tap_element(element_id: str, *, by: Optional[LocatorStrategy] = None) 
         logger.error(error_msg)
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
+        
+        # Log the failed action
+        action_tracer.log_action("tap_element", {
+            "element_id": element_id,
+            "by": str(by) if by else "accessibility_id",
+            "status": "failed",
+            "reason": "error",
+            "error": str(e),
+            "selector_used": f"{by_strategy}={element_id}"
+        })
+        
         return error_msg
 
 @function_tool
@@ -223,6 +341,12 @@ async def swipe(direction: SwipeDirection = None, start_x: Optional[int] = None,
     
     driver_status, message = check_driver_connection()
     if not driver_status:
+        # Log failed action
+        action_tracer.log_action("swipe", {
+            "status": "failed",
+            "reason": "driver_not_connected",
+            "message": message
+        })
         return message
     
     try:
@@ -238,6 +362,14 @@ async def swipe(direction: SwipeDirection = None, start_x: Optional[int] = None,
             error_msg = "Either direction or all coordinates (start_x, start_y, end_x, end_y) must be provided"
             logger.error(error_msg)
             print_error(error_msg)
+            
+            # Log failed action
+            action_tracer.log_action("swipe", {
+                "status": "failed",
+                "reason": "invalid_parameters",
+                "message": error_msg
+            })
+            
             return error_msg
         
         if using_coordinates:
@@ -252,6 +384,18 @@ async def swipe(direction: SwipeDirection = None, start_x: Optional[int] = None,
             
             logger.info(f"Swiping with raw coordinates: ({start_x}, {start_y}) to ({end_x}, {end_y})")
             ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
+            
+            # Log successful action
+            action_tracer.log_action("swipe", {
+                "status": "success",
+                "method": "coordinates",
+                "start_x": start_x,
+                "start_y": start_y,
+                "end_x": end_x,
+                "end_y": end_y,
+                "screen_width": width,
+                "screen_height": height
+            })
             
             success_msg = f"Successfully performed coordinate swipe from ({start_x}, {start_y}) to ({end_x}, {end_y})"
             logger.info(success_msg)
@@ -269,6 +413,19 @@ async def swipe(direction: SwipeDirection = None, start_x: Optional[int] = None,
             start_x, start_y, end_x, end_y = swipe_params[direction]
             ios_driver.driver.swipe(start_x, start_y, end_x, end_y, 500)
             
+            # Log successful action
+            action_tracer.log_action("swipe", {
+                "status": "success",
+                "method": "direction",
+                "direction": direction.value,
+                "start_x": start_x,
+                "start_y": start_y,
+                "end_x": end_x,
+                "end_y": end_y,
+                "screen_width": width,
+                "screen_height": height
+            })
+            
             success_msg = f"Successfully performed {direction.value} swipe"
             logger.info(success_msg)
             print_success(success_msg)
@@ -278,6 +435,17 @@ async def swipe(direction: SwipeDirection = None, start_x: Optional[int] = None,
         logger.error(error_msg)
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
+        
+        # Log failed action
+        action_tracer.log_action("swipe", {
+            "status": "failed",
+            "reason": "error",
+            "error": str(e),
+            "direction": str(direction) if direction else None,
+            "start_coords": f"({start_x}, {start_y})" if start_x is not None and start_y is not None else None,
+            "end_coords": f"({end_x}, {end_y})" if end_x is not None and end_y is not None else None
+        })
+        
         return error_msg
 
 @function_tool
@@ -296,10 +464,25 @@ async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy
         error_msg = "Element ID cannot be empty"
         logger.error(error_msg)
         print_error(error_msg)
+        
+        # Log failed action
+        action_tracer.log_action("send_input", {
+            "status": "failed",
+            "reason": "missing_element_id",
+            "message": error_msg
+        })
+        
         return error_msg
     
     driver_status, message = check_driver_connection()
     if not driver_status:
+        # Log failed action
+        action_tracer.log_action("send_input", {
+            "status": "failed",
+            "reason": "driver_not_connected",
+            "message": message
+        })
+        
         return message
     
     try:
@@ -312,16 +495,140 @@ async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy
         
         by_strategy = locator_map[by] if by else AppiumBy.ACCESSIBILITY_ID
         
+        # Update app state with current activity/view information
+        try:
+            current_view = ios_driver.driver.execute_script('mobile: activeAppInfo')
+            if current_view:
+                action_tracer.update_app_state(
+                    current_activity=current_view.get('process'),
+                    current_screen=current_view.get('bundleId'),
+                    current_view=current_view.get('name', 'Unknown')
+                )
+        except Exception as e:
+            logger.debug(f"Could not get current app view: {str(e)}")
+            
         try:
             element = ios_driver.driver.find_element(by=by_strategy, value=element_id)
         except Exception as e:
             error_msg = f"Element not found: {str(e)}"
             logger.warning(error_msg)
             print_warning(error_msg)
-            return error_msg
             
+            # Log failed action
+            action_tracer.log_action("send_input", {
+                "element_id": element_id,
+                "text": text,
+                "by": str(by) if by else "accessibility_id",
+                "status": "failed",
+                "reason": "element_not_found",
+                "error": str(e),
+                "selector_used": f"{by_strategy}={element_id}"
+            })
+            
+            return error_msg
+        
+        # Get comprehensive element attributes BEFORE input
+        pre_input_attributes = {}
+        try:
+            pre_input_attributes = {
+                "text": element.text,
+                "tag_name": element.tag_name,
+                "location": element.location,
+                "size": element.size,
+                "enabled": element.is_enabled(),
+                "selected": element.is_selected(),
+                "rect": element.rect
+            }
+            
+            # Get all available attributes
+            for attr in ["name", "type", "label", "value"]:
+                try:
+                    attr_value = element.get_attribute(attr)
+                    if attr_value is not None:
+                        pre_input_attributes[attr] = attr_value
+                except:
+                    pass
+                
+            # Try to generate an XPath
+            try:
+                xpath = None
+                if element.tag_name and element.get_attribute("label"):
+                    xpath = f"//{element.tag_name}[@label='{element.get_attribute('label')}']"
+                elif element.tag_name and element.get_attribute("name"):
+                    xpath = f"//{element.tag_name}[@name='{element.get_attribute('name')}']"
+                
+                if xpath:
+                    pre_input_attributes["generated_xpath"] = xpath
+            except Exception as e:
+                logger.debug(f"Could not generate XPath: {str(e)}")
+                
+        except Exception as e:
+            logger.debug(f"Error getting pre-input element attributes: {str(e)}")
+        
+        # Save page source before input
+        pre_input_page_source = None
+        try:
+            pre_input_page_source = get_clean_page_source()
+            if pre_input_page_source:
+                # Save the page source to a temp file for reference
+                page_source_dir = Path("artifacts") / "temp"
+                page_source_dir.mkdir(parents=True, exist_ok=True)
+                temp_page_source_path = page_source_dir / f"pre_input_{int(time.time())}.xml"
+                temp_page_source_path.write_text(pre_input_page_source, encoding='utf-8')
+        except Exception as e:
+            logger.debug(f"Error capturing pre-input page source: {str(e)}")
+            
+        # Perform the input operation
         element.clear()
         element.send_keys(text)
+        
+        # Get element attributes AFTER input
+        post_input_attributes = {}
+        try:
+            post_input_attributes = {
+                "text": element.text,
+                "tag_name": element.tag_name,
+                "value": element.get_attribute("value")
+            }
+            
+            # Get other attributes that might have changed
+            for attr in ["name", "label", "value"]:
+                try:
+                    attr_value = element.get_attribute(attr)
+                    if attr_value is not None:
+                        post_input_attributes[attr] = attr_value
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.debug(f"Error getting post-input element attributes: {str(e)}")
+            
+        # Save page source after input if it changed
+        post_input_page_source = None
+        try:
+            post_input_page_source = get_clean_page_source()
+            if post_input_page_source and pre_input_page_source != post_input_page_source:
+                # Save the page source to a temp file for reference
+                page_source_dir = Path("artifacts") / "temp"
+                page_source_dir.mkdir(parents=True, exist_ok=True)
+                temp_page_source_path = page_source_dir / f"post_input_{int(time.time())}.xml"
+                temp_page_source_path.write_text(post_input_page_source, encoding='utf-8')
+        except Exception as e:
+            logger.debug(f"Error capturing post-input page source: {str(e)}")
+        
+        # Log successful action with enhanced information
+        action_tracer.log_action("send_input", {
+            "element_id": element_id,
+            "text": text,
+            "by": str(by) if by else "accessibility_id",
+            "status": "success",
+            "selector_used": f"{by_strategy}={element_id}",
+            "field_state": {
+                "before": pre_input_attributes,
+                "after": post_input_attributes,
+                "page_source_changed": pre_input_page_source != post_input_page_source if pre_input_page_source and post_input_page_source else None
+            }
+        })
         
         success_msg = f"Successfully sent input '{text}' to element with {by_strategy}: {element_id}"
         logger.info(success_msg)
@@ -332,6 +639,18 @@ async def send_input(element_id: str, text: str, *, by: Optional[LocatorStrategy
         logger.error(error_msg)
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
+        
+        # Log failed action
+        action_tracer.log_action("send_input", {
+            "element_id": element_id,
+            "text": text,
+            "by": str(by) if by else "accessibility_id",
+            "status": "failed",
+            "reason": "error",
+            "error": str(e),
+            "selector_used": f"{by_strategy}={element_id}"
+        })
+        
         return error_msg
 
 @function_tool
@@ -344,11 +663,24 @@ async def navigate_to(url: str) -> str:
     """
     driver_status, message = check_driver_connection()
     if not driver_status:
+        # Log failed action
+        action_tracer.log_action("navigate_to", {
+            "status": "failed",
+            "reason": "driver_not_connected",
+            "message": message,
+            "url": url
+        })
         return message
     
     try:
         # Navigate to URL
         ios_driver.driver.get(url)
+        
+        # Log successful action
+        action_tracer.log_action("navigate_to", {
+            "status": "success",
+            "url": url
+        })
         
         success_msg = f"Successfully navigated to {url}"
         logger.info(success_msg)
@@ -359,6 +691,15 @@ async def navigate_to(url: str) -> str:
         logger.error(error_msg)
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
+        
+        # Log failed action
+        action_tracer.log_action("navigate_to", {
+            "status": "failed",
+            "reason": "error",
+            "error": str(e),
+            "url": url
+        })
+        
         return error_msg
 
 @function_tool
@@ -385,6 +726,11 @@ async def launch_app(bundle_id: str) -> str:
                 ios_driver.driver.terminate_app(bundle_id)
                 ios_driver.driver.activate_app(bundle_id)
                 
+                # Start action tracing for app
+                app_dir_name = bundle_id.split('.')[-1].lower()
+                action_tracer.start_new_trace(app_dir_name, bundle_id)
+                action_tracer.log_action("app_launch", {"bundle_id": bundle_id, "status": "reactivated"})
+                
                 success_msg = f"Successfully relaunched app with bundle ID: {bundle_id}"
                 logger.info(success_msg)
                 print_success(success_msg)
@@ -400,6 +746,11 @@ async def launch_app(bundle_id: str) -> str:
         result = ios_driver.init_driver(bundle_id)
         
         if result:
+            # Start action tracing for app
+            app_dir_name = bundle_id.split('.')[-1].lower()
+            action_tracer.start_new_trace(app_dir_name, bundle_id)
+            action_tracer.log_action("app_launch", {"bundle_id": bundle_id, "status": "initialized"})
+            
             success_msg = f"Successfully launched app with bundle ID: {bundle_id}"
             logger.info(success_msg)
             print_success(success_msg)
@@ -422,11 +773,18 @@ async def take_screenshot() -> str:
     logger.info("Tool called: take_screenshot")
     driver_status, message = check_driver_connection()
     if not driver_status:
+        # Log failed action
+        action_tracer.log_action("take_screenshot", {
+            "status": "failed",
+            "reason": "driver_not_connected", 
+            "message": message
+        })
         return message
     
     try:
         # Get current app bundle ID or use "unknown_app" as fallback
         app_dir_name = "unknown_app"
+        bundle_id = None
         try:
             # For iOS, we get the bundle ID from capabilities
             bundle_id = ios_driver.driver.capabilities.get('bundleId')
@@ -470,12 +828,128 @@ async def take_screenshot() -> str:
             
         pagesource_path.write_text(page_source, encoding='utf-8')
         
+        # Log the successful action with file paths
+        action_tracer.log_action("take_screenshot", {
+            "status": "success",
+            "app": app_dir_name,
+            "bundle_id": bundle_id,
+            "screenshot_path": str(screenshot_path),
+            "pagesource_path": str(pagesource_path),
+            "timestamp": timestamp
+        })
+        
         success_msg = f"Artifacts saved successfully:\nApp: {bundle_id if 'bundleId' in ios_driver.driver.capabilities else app_dir_name}\nScreenshot: {screenshot_path}\nPage Source: {pagesource_path}"
         logger.info(success_msg)
         print_success(success_msg)
         return success_msg
     except Exception as e:
         error_msg = f"Failed to capture artifacts: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        
+        # Log the failed action
+        action_tracer.log_action("take_screenshot", {
+            "status": "failed",
+            "reason": "error",
+            "error": str(e)
+        })
+        
+        return error_msg 
+
+@function_tool
+async def end_action_trace() -> str:
+    """
+    Manually end the current action trace if active.
+    This saves the trace file and finalizes it.
+    """
+    logger.info("Tool called: end_action_trace")
+    
+    try:
+        action_tracer.end_trace()
+        success_msg = "Action trace ended successfully"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
+    except Exception as e:
+        error_msg = f"Failed to end action trace: {str(e)}"
+        logger.error(error_msg)
+        logger.debug(f"Stack trace: {traceback.format_exc()}")
+        print_error(error_msg)
+        return error_msg 
+
+def track_network_request(url: str, method: str, status: Optional[int] = None, 
+                       request_data: Optional[Dict[str, Any]] = None,
+                       response_data: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Track a network request in the action trace.
+    
+    Args:
+        url: URL of the request
+        method: HTTP method (GET, POST, etc.)
+        status: HTTP status code if available
+        request_data: Request data/body if available
+        response_data: Response data if available
+    """
+    try:
+        action_tracer.log_network_request(
+            url=url,
+            method=method,
+            status=status,
+            request_data=request_data,
+            response_data=response_data
+        )
+    except Exception as e:
+        logger.debug(f"Failed to track network request: {str(e)}")
+
+@function_tool
+async def capture_network_request(url: str, method: str, status: Optional[int] = None, 
+                                request_body: Optional[str] = None,
+                                response_body: Optional[str] = None) -> str:
+    """
+    Manually capture a network request in the action trace.
+    
+    Args:
+        url: URL of the request
+        method: HTTP method (GET, POST, etc.)
+        status: HTTP status code (optional)
+        request_body: Request body as string (optional)
+        response_body: Response body as string (optional)
+    """
+    logger.info(f"Tool called: capture_network_request for {method} {url}")
+    
+    try:
+        # Convert bodies to dictionaries if they are JSON
+        request_data = None
+        response_data = None
+        
+        if request_body:
+            try:
+                request_data = json.loads(request_body)
+            except:
+                request_data = {"raw": request_body}
+                
+        if response_body:
+            try:
+                response_data = json.loads(response_body)
+            except:
+                response_data = {"raw": response_body}
+        
+        # Track the network request
+        action_tracer.log_network_request(
+            url=url,
+            method=method,
+            status=status,
+            request_data=request_data,
+            response_data=response_data
+        )
+        
+        success_msg = f"Successfully captured network request: {method} {url}"
+        logger.info(success_msg)
+        print_success(success_msg)
+        return success_msg
+    except Exception as e:
+        error_msg = f"Failed to capture network request: {str(e)}"
         logger.error(error_msg)
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         print_error(error_msg)
