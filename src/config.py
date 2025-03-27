@@ -15,12 +15,33 @@ class AppiumConfig(BaseModel):
     device_name: str = Field("iPhone 16 Pro", description="Target device name")
     platform_version: str = Field("18.2", description="Platform version")
     automation_name: str = Field("XCUITest", description="Automation framework")
+    udid: Optional[str] = Field(None, description="Real device UDID")
+    team_id: Optional[str] = Field(None, description="Apple Developer Team ID")
+    signing_id: Optional[str] = Field("iPhone Developer", description="Code signing identity")
+    wda_local_port: Optional[int] = Field(8100, description="WebDriverAgent local port")
+    wda_bundle_id: Optional[str] = Field("com.facebook.WebDriverAgentRunner.xctrunner", description="WebDriverAgent bundle ID")
     
-    @field_validator('port')
-    def port_must_be_valid(cls, v):
+    @field_validator('port', 'wda_local_port')
+    def port_must_be_valid(cls, v, info: FieldValidationInfo):
         if not (1024 <= v <= 65535):
-            logger.warning(f"Invalid port number: {v}, using default 4723")
-            return 4723
+            field_name = info.field_name
+            default = 4723 if field_name == 'port' else 8100
+            logger.warning(f"Invalid {field_name}: {v}, using default {default}")
+            return default
+        return v
+
+    @field_validator('udid')
+    def validate_udid(cls, v):
+        if v and not isinstance(v, str):
+            logger.warning("Invalid UDID format, must be string")
+            return None
+        return v
+
+    @field_validator('team_id')
+    def validate_team_id(cls, v):
+        if v and not isinstance(v, str):
+            logger.warning("Invalid Team ID format, must be string")
+            return None
         return v
 
 class AppConfig(BaseModel):
@@ -82,7 +103,12 @@ def load_config() -> Config:
                 platform_name=os.getenv("IOS_PLATFORM_NAME", "iOS"),
                 device_name=os.getenv("IOS_DEVICE_NAME", "iPhone 16 Pro"),
                 platform_version=os.getenv("IOS_PLATFORM_VERSION", "18.2"),
-                automation_name=os.getenv("IOS_AUTOMATION_NAME", "XCUITest")
+                automation_name=os.getenv("IOS_AUTOMATION_NAME", "XCUITest"),
+                udid=os.getenv("IOS_DEVICE_UDID"),
+                team_id=os.getenv("IOS_TEAM_ID"),
+                signing_id=os.getenv("IOS_SIGNING_ID", "iPhone Developer"),
+                wda_local_port=int(os.getenv("WDA_LOCAL_PORT", "8100")),
+                wda_bundle_id=os.getenv("WDA_BUNDLE_ID", "com.facebook.WebDriverAgentRunner.xctrunner")
             )
         )
         

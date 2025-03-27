@@ -10,7 +10,10 @@ import logging
 import weakref
 import traceback
 import sys
+import subprocess
+import json
 from pathlib import Path
+from typing import Optional, Dict, Any
 
 # Add the parent directory to sys.path to allow importing from src
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -24,6 +27,7 @@ class IOSDriver:
     def __init__(self):
         self.driver = None
         self.config = load_config()
+        self.device_info = None
         # Add self to the set of instances
         self._instances.add(weakref.ref(self))
         logger.debug("IOSDriver instance created")
@@ -40,6 +44,37 @@ class IOSDriver:
                 except Exception as e:
                     logger.error(f"Error cleaning up instance: {str(e)}")
     
+    def detect_real_device(self) -> Optional[Dict[str, str]]:
+        """Detect connected iOS device using libimobiledevice."""
+        try:
+            # Run ideviceinfo to get device information
+            result = subprocess.run(['ideviceinfo'], capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.debug("No iOS device detected with ideviceinfo")
+                return None
+                
+            # Parse the output to get device details
+            lines = result.stdout.strip().split('\n')
+            device_info = {}
+            for line in lines:
+                if ': ' in line:
+                    key, value = line.split(': ', 1)
+                    device_info[key.strip()] = value.strip()
+            
+            # Extract relevant information
+            if 'UniqueDeviceID' in device_info:
+                logger.info(f"Found iOS device with UDID: {device_info['UniqueDeviceID']}")
+                return {
+                    'udid': device_info['UniqueDeviceID'],
+                    'name': device_info.get('DeviceName', 'iOS Device'),
+                    'ios_version': device_info.get('ProductVersion', ''),
+                    'product_type': device_info.get('ProductType', '')
+                }
+        except Exception as e:
+            logger.error(f"Error detecting iOS device: {str(e)}")
+        
+        return None
+
     def init_driver(self, bundle_id: str):
         """Initialize the Appium driver with the given bundle ID."""
         if not bundle_id:
@@ -53,6 +88,9 @@ class IOSDriver:
         logger.info(f"Initializing iOS driver for bundle ID: {bundle_id}")
         appium_config = self.config.appium
         
+        # Try to detect real device first
+        self.device_info = self.detect_real_device()
+        
         # Create Appium options object for newer Appium versions
         from appium.options.ios import XCUITestOptions
         options = XCUITestOptions()
@@ -60,14 +98,35 @@ class IOSDriver:
         # Set required capabilities
         options.platform_name = appium_config.platform_name
         options.automation_name = appium_config.automation_name
-        options.device_name = appium_config.device_name
-        options.platform_version = appium_config.platform_version
-        options.bundle_id = bundle_id
         
-        # Add WDA capabilities for more reliable connections
-        options.set_capability("wdaStartupRetries", 4)
-        options.set_capability("wdaStartupRetryInterval", 20000)
-        options.set_capability("useNewWDA", False)
+        # Use detected device info if available, otherwise fall back to config
+        if self.device_info:
+            logger.info("Using detected real device configuration")
+            options.device_name = self.device_info['name']
+            options.platform_version = self.device_info['ios_version']
+            options.udid = self.device_info['udid']
+            
+            # Add WebDriverAgent configuration for real devices
+            if appium_config.team_id:
+                options.set_capability("appium:xcodeOrgId", appium_config.team_id)
+                options.set_capability("appium:xcodeSigningId", appium_config.signing_id)
+            
+            # Configure WDA settings
+            options.set_capability("appium:wdaLocalPort", appium_config.wda_local_port)
+            options.set_capability("appium:updatedWDABundleId", appium_config.wda_bundle_id)
+            options.set_capability("appium:useNewWDA", False)
+            options.set_capability("appium:usePrebuiltWDA", False)
+            options.set_capability("appium:wdaStartupRetries", 4)
+            options.set_capability("appium:wdaStartupRetryInterval", 20000)
+            options.set_capability("appium:shouldUseSingletonTestManager", False)
+            options.set_capability("appium:shouldTerminateApp", True)
+            options.set_capability("appium:isRealMobile", True)
+        else:
+            logger.info("No real device detected, using simulator configuration")
+            options.device_name = appium_config.device_name
+            options.platform_version = appium_config.platform_version
+        
+        options.bundle_id = bundle_id
         
         # Construct Appium server URL
         server_url = f'http://{appium_config.host}:{appium_config.port}'
@@ -92,18 +151,14 @@ class IOSDriver:
 
     def cleanup(self):
         """Clean up the driver instance."""
-        if hasattr(self, 'driver') and self.driver:
-            logger.info("Cleaning up driver instance")
+        logger.info("Cleaning up driver instance")
+        if self.driver:
             try:
                 self.driver.quit()
-                logger.info("Driver quit successfully")
             except Exception as e:
-                logger.warning(f"Error during driver quit: {str(e)}")
-                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                logger.warning(f"Error during driver cleanup: {str(e)}")
             finally:
                 self.driver = None
-        else:
-            logger.debug("No driver to clean up")
 
     def tap_element(self, **locator):
         """Tap an element identified by the given locator."""
