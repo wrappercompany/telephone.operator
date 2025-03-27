@@ -25,7 +25,7 @@ export default function AppCard({ name, screenshots }: AppCardProps) {
 
   return (
     <Link href={`/app/${name}`} className="block group">
-      <div className="bg-gray-100 rounded-3xl p-8 relative">
+      <div className="bg-gray-100 rounded-3xl p-8 px-18 relative">
       
         
         {/* Navigation dots */}
@@ -63,7 +63,7 @@ export default function AppCard({ name, screenshots }: AppCardProps) {
         
         {/* App info */}
         <div className="flex items-center mt-8">
-          <div className="h-12 w-12 bg-gradient-to-br from-orange-500 to-pink-500 rounded-xl mr-4 overflow-hidden">
+          <div className="h-12 w-12 bg-gradient-to-br from-orange-500 to-pink-500 rounded-l mr-4 overflow-hidden">
             {screenshots.length > 0 && (
               <Image 
                 src={screenshots[0]} 

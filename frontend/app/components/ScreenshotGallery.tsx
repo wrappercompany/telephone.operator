@@ -56,7 +56,7 @@ export default function ScreenshotGallery({ screenshots, appName }: ScreenshotGa
               src={screenshot}
               alt={`Thumbnail ${index + 1}`}
               fill
-              className="object-cover"
+              className="object-contain"
               sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 16vw"
             />
             <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs py-1 px-2">
