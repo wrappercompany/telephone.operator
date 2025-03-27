@@ -76,7 +76,6 @@ export default function AppCard({ name, screenshots }: AppCardProps) {
           </div>
           <div>
             <h3 className="text-lg font-bold text-black">{formattedName}</h3>
-            <p className="text-gray-500">A new way to explore</p>
           </div>
         </div>
       </div>
