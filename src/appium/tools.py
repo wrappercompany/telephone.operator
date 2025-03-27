@@ -16,6 +16,21 @@ from ..ui.console import console, Panel, print_error, print_warning, print_succe
 
 logger = logging.getLogger(__name__)
 
+def require_appium_connection(func):
+    """
+    Decorator to ensure appium is properly set up and connected before executing agent tools.
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        driver_status, message = check_driver_connection()
+        if not driver_status:
+            error_msg = f"Cannot execute {func.__name__}: {message}"
+            logger.error(error_msg)
+            print_error(error_msg)
+            return error_msg
+        return await func(*args, **kwargs)
+    return wrapper
+
 class LocatorStrategy(str, Enum):
     ACCESSIBILITY_ID = "accessibility_id"
     XPATH = "xpath"

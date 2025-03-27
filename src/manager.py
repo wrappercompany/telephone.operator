@@ -68,6 +68,43 @@ class ScreenshotManager:
                 logger.error(error_msg)
                 print_error(error_msg)
                 return
+
+            # Check and initialize Appium connection before making any agent calls
+            self.printer.update_item(
+                "appium",
+                "[bold blue]Initializing Appium connection...[/bold blue]",
+                hide_checkmark=True
+            )
+            
+            try:
+                # Try to initialize the driver with the app's bundle ID
+                if not ios_driver.init_driver(app_config['bundle_id']):
+                    error_msg = "Failed to initialize Appium driver. Please check Appium server is running."
+                    logger.error(error_msg)
+                    print_error(error_msg)
+                    self.printer.update_item(
+                        "appium",
+                        "[bold red]Appium connection failed. Aborting.[/bold red]",
+                        is_done=True
+                    )
+                    return
+                    
+                self.printer.update_item(
+                    "appium",
+                    "[bold green]Appium connection successful[/bold green]",
+                    is_done=True
+                )
+            except Exception as e:
+                error_msg = f"Error initializing Appium driver: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                print_error(error_msg)
+                self.printer.update_item(
+                    "appium",
+                    "[bold red]Appium connection failed. Aborting.[/bold red]",
+                    is_done=True
+                )
+                return
                 
             # STEP 1: Create a plan using the planner agent
             self.printer.update_item(
@@ -501,6 +538,43 @@ Start by launching the app and systematically work through each section. Use the
                 f"[dim blue]View trace: https://platform.openai.com/traces/{trace_id}[/dim blue]",
                 hide_checkmark=True
             )
+            
+            # Check and initialize Appium connection before starting chat
+            self.printer.update_item(
+                "appium",
+                "[bold blue]Initializing Appium connection...[/bold blue]",
+                hide_checkmark=True
+            )
+            
+            try:
+                # Try to initialize the driver with the app's bundle ID
+                if not ios_driver.init_driver(app_config['bundle_id']):
+                    error_msg = "Failed to initialize Appium driver. Please check Appium server is running."
+                    logger.error(error_msg)
+                    print_error(error_msg)
+                    self.printer.update_item(
+                        "appium",
+                        "[bold red]Appium connection failed. Aborting.[/bold red]",
+                        is_done=True
+                    )
+                    return
+                    
+                self.printer.update_item(
+                    "appium",
+                    "[bold green]Appium connection successful[/bold green]",
+                    is_done=True
+                )
+            except Exception as e:
+                error_msg = f"Error initializing Appium driver: {str(e)}"
+                logger.error(error_msg)
+                logger.debug(f"Stack trace: {traceback.format_exc()}")
+                print_error(error_msg)
+                self.printer.update_item(
+                    "appium",
+                    "[bold red]Appium connection failed. Aborting.[/bold red]",
+                    is_done=True
+                )
+                return
             
             try:
                 # Initialize the chat interface
