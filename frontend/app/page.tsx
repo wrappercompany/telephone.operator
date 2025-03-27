@@ -5,7 +5,7 @@ export default async function Home() {
   const apps = await getArtifacts();
 
   return (
-    <div className="container mx-auto px-4 py-12">
+    <div className="container mx-auto px-4 py-12 bg-[#fafafa]">
       {apps.length === 0 ? (
         <div className="text-center py-12">
           <h2 className="text-xl text-gray-500">No apps found</h2>

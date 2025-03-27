@@ -25,24 +25,11 @@ export default function AppCard({ name, screenshots }: AppCardProps) {
 
   return (
     <Link href={`/app/${name}`} className="block group">
-      <div className="bg-gray-100 rounded-3xl p-8 px-18 relative">
-      
-        
-        {/* Navigation dots */}
-        <div className="flex justify-end mb-6 gap-1.5">
-          {screenshots.map((_, index) => (
-            <div 
-              key={index}
-              className={`w-2 h-2 rounded-full ${
-                index === currentIndex ? 'bg-black' : 'bg-gray-300'
-              }`}
-            ></div>
-          ))}
-        </div>
+      <div className="rounded-xl p-8 px-18 relative">
         
         {/* Phone frame with screenshot */}
         <div className="relative aspect-[9/19] mx-auto max-w-xs mb-6">
-          <div className="absolute inset-0 bg-black rounded-[40px] overflow-hidden">
+          <div className="absolute inset-0 bg-black rounded-[20px] overflow-hidden">
             {screenshots.length > 0 ? (
               <Image 
                 src={screenshots[currentIndex]} 
@@ -63,17 +50,7 @@ export default function AppCard({ name, screenshots }: AppCardProps) {
         
         {/* App info */}
         <div className="flex items-center mt-8">
-          <div className="h-12 w-12 bg-gradient-to-br from-orange-500 to-pink-500 rounded-l mr-4 overflow-hidden">
-            {screenshots.length > 0 && (
-              <Image 
-                src={screenshots[0]} 
-                alt={`${formattedName} icon`} 
-                width={48} 
-                height={48} 
-                className="object-cover"
-              />
-            )}
-          </div>
+
           <div>
             <h3 className="text-lg font-bold text-black">{formattedName}</h3>
           </div>
