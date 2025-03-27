@@ -12,8 +12,8 @@ async def main() -> None:
     
     # Configure target app
     target_app = {
-        "name": "Messages",  # Human readable name
-        "bundle_id": "com.apple.MobileSMS"  # Bundle ID for launching
+        "name": "Notes",  # Human readable name
+        "bundle_id": "com.apple.MobileNotes"  # Bundle ID for launching
     }
 
     # Create the screenshot manager

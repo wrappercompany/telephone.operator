@@ -121,6 +121,10 @@ class IOSDriver:
             options.set_capability("appium:shouldUseSingletonTestManager", False)
             options.set_capability("appium:shouldTerminateApp", True)
             options.set_capability("appium:isRealMobile", True)
+            
+            # Set status bar time to 9:41
+            options.set_capability("appium:statusBarTime", "9:41")
+            options.set_capability("appium:forceStatusBarTime", True)
         else:
             logger.info("No real device detected, using simulator configuration")
             options.device_name = appium_config.device_name
