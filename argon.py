@@ -11,12 +11,7 @@
 #     "python-dotenv>=1.0.0",
 #     "requests>=2.31.0",
 #     "selenium>=4.0.0",
-#     "mcp>=0.1.0",
-#     "beautifulsoup4>=4.12.0",
-#     "lxml>=4.9.0",
-#     "openai>=1.0.0",
-#     "numpy>=1.24.0",
-#     "scikit-learn>=1.3.0"
+#     "mcp>=0.1.0"
 # ]
 # ///
 
@@ -38,15 +33,10 @@ try:
     from enum import Enum
     from pathlib import Path
     import subprocess
-    from typing import Dict, Optional, Tuple, List
+    from typing import Dict, Optional, Tuple
     import logging
     import traceback
     import weakref
-    import json
-    from bs4 import BeautifulSoup
-    import openai
-    import numpy as np
-    from sklearn.metrics.pairwise import cosine_similarity
 
     # Third-party imports
     print("Attempting to import Appium...", file=sys.stderr)
@@ -328,113 +318,10 @@ def get_clean_page_source() -> Optional[str]:
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         return None
 
-class UIElement:
-    """Represents a UI element with its properties and vector embedding."""
-    def __init__(self, element_type: str, text: str, attributes: Dict[str, str]):
-        self.element_type = element_type
-        self.text = text
-        self.attributes = attributes
-        self.embedding: Optional[np.ndarray] = None
-        
-    def to_text(self) -> str:
-        """Convert element to searchable text representation."""
-        attrs = ' '.join(f'{k}="{v}"' for k, v in self.attributes.items())
-        return f"Type: {self.element_type} Text: {self.text} Attributes: {attrs}"
-        
-    def __str__(self) -> str:
-        return self.to_text()
-
-class RAGPageSource:
-    """RAG implementation for searching UI elements."""
-    def __init__(self):
-        self.elements: List[UIElement] = []
-        self.embeddings: Optional[np.ndarray] = None
-        
-    async def compute_embedding(self, text: str) -> np.ndarray:
-        """Compute embedding for a text string using OpenAI's API."""
-        try:
-            response = await openai.Embedding.acreate(
-                model="text-embedding-3-small",
-                input=text,
-                encoding_format="float"
-            )
-            return np.array(response.data[0].embedding)
-        except Exception as e:
-            logger.error(f"Error computing embedding: {str(e)}")
-            raise
-
-    async def add_elements(self, page_source: str):
-        """Parse page source and compute embeddings for all elements."""
-        try:
-            # Parse XML
-            soup = BeautifulSoup(page_source, 'lxml')
-            self.elements = []
-            
-            # Extract elements
-            for element in soup.find_all(True):
-                ui_element = UIElement(
-                    element_type=element.name,
-                    text=element.get_text(strip=True),
-                    attributes=dict(element.attrs)
-                )
-                self.elements.append(ui_element)
-            
-            # Compute embeddings for all elements
-            embeddings = []
-            for element in self.elements:
-                element_text = element.to_text()
-                embedding = await self.compute_embedding(element_text)
-                embeddings.append(embedding)
-                
-            self.embeddings = np.vstack(embeddings)
-            
-        except Exception as e:
-            logger.error(f"Error adding elements: {str(e)}")
-            raise
-
-    async def search(self, query: str, top_k: int = 5) -> List[Tuple[UIElement, float]]:
-        """Search for elements most similar to the query."""
-        try:
-            # Get query embedding
-            query_embedding = await self.compute_embedding(query)
-            
-            # Compute similarities
-            similarities = cosine_similarity(query_embedding.reshape(1, -1), self.embeddings)[0]
-            
-            # Get top k results
-            top_indices = np.argsort(similarities)[-top_k:][::-1]
-            
-            return [(self.elements[i], similarities[i]) for i in top_indices]
-            
-        except Exception as e:
-            logger.error(f"Error during search: {str(e)}")
-            raise
-
-def format_search_results(results: List[Tuple[UIElement, float]]) -> str:
-    """Format search results into a readable string."""
-    output = []
-    for element, score in results:
-        relevance = "High" if score > 0.8 else "Medium" if score > 0.5 else "Low"
-        output.append(f"[Relevance: {relevance} ({score:.2f})]")
-        output.append(f"Element Type: {element.element_type}")
-        if element.text:
-            output.append(f"Text: {element.text}")
-        if element.attributes:
-            output.append("Attributes:")
-            for key, value in element.attributes.items():
-                output.append(f"  {key}: {value}")
-        output.append("")
-    
-    return "\n".join(output)
-
+# Register all Appium tools
 @mcp.tool()
-async def get_page_source_tool(query: Optional[str] = None) -> str:
-    """
-    Get the current page source and search through it using RAG.
-    
-    Args:
-        query: Optional search query to find specific elements
-    """
+async def get_page_source_tool() -> str:
+    """Get the current page source of the application."""
     driver_status, message = check_driver_connection()
     if not driver_status:
         return message
@@ -446,23 +333,11 @@ async def get_page_source_tool(query: Optional[str] = None) -> str:
             logger.warning(error_msg)
             return error_msg
         
-        # Initialize RAG
-        rag = RAGPageSource()
-        await rag.add_elements(page_source)
-        
-        if query:
-            # Perform semantic search
-            logger.info(f"Performing RAG search with query: {query}")
-            results = await rag.search(query)
-            return format_search_results(results)
-        else:
-            # Return summary
-            total_elements = len(rag.elements)
-            element_types = set(e.element_type for e in rag.elements)
-            return f"Page contains {total_elements} elements of types: {', '.join(sorted(element_types))}. Use a search query to find specific elements."
+        logger.info("Returning full page source")
+        return page_source
         
     except Exception as e:
-        error_msg = f"Failed to process page source: {str(e)}"
+        error_msg = f"Failed to get page source: {str(e)}"
         logger.error(error_msg)
         logger.debug(f"Stack trace: {traceback.format_exc()}")
         return error_msg
